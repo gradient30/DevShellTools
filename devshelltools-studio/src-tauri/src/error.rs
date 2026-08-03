@@ -22,6 +22,8 @@ pub enum DstError {
     AiClient(String),
     #[error("凭证错误：{0}")]
     Keyring(String),
+    #[error("HTTP 错误：{0}")]
+    Http(#[from] reqwest::Error),
     #[error("{0}")]
     Other(String),
 }

@@ -13,6 +13,11 @@
   import CategoryList from "./lib/components/CategoryList.svelte";
   import CategoryEditor from "./lib/components/CategoryEditor.svelte";
   import NewCategoryDialog from "./lib/components/NewCategoryDialog.svelte";
+  import ChatPanel from "./lib/components/ChatPanel.svelte";
+  import AiSettings from "./lib/components/AiSettings.svelte";
+
+  type Tab = "manage" | "chat" | "settings";
+  let tab = $state<Tab>("manage");
 
   let categories = $state<CategoryInfo[]>([]);
   let selectedFileName = $state<string | null>(null);
@@ -22,6 +27,7 @@
   let consistency = $state<ConsistencyReport | null>(null);
   let showNewDialog = $state(false);
   let logsLoading = $state(false);
+  let aiReady = $state(false);
 
   onMount(async () => {
     await refresh();
@@ -30,7 +36,7 @@
   });
 
   async function loadAll() {
-    await Promise.all([loadCategories(), loadLog(), loadConsistency()]);
+    await Promise.all([loadCategories(), loadLog(), loadConsistency(), loadAiReady()]);
   }
 
   async function loadCategories() {
@@ -70,6 +76,14 @@
       consistency = await api.consistencyCheck();
     } catch (e) {
       console.error(e);
+    }
+  }
+
+  async function loadAiReady() {
+    try {
+      aiReady = await api.aiReady();
+    } catch {
+      aiReady = false;
     }
   }
 
@@ -130,6 +144,47 @@
     }
   }
 
+  // AI 生成的代码应用到工作区
+  async function handleApplyCode(code: string, category: string | null) {
+    if (category) {
+      // 有分类名 → 作为新分类文件或追加到现有
+      const fileName = `${category}.ps1`;
+      const existing = categories.find((c) => c.file_name === fileName);
+      if (existing) {
+        // 追加到现有文件
+        if (!confirm(`将代码追加到现有分类 ${fileName}？`)) return;
+        try {
+          const old = await api.readCategoryFile(fileName);
+          const newContent = old.trimEnd() + "\n\n" + code.trimEnd() + "\n";
+          await api.updateCategoryFile(fileName, newContent, `AI 生成追加到 ${fileName}`);
+          successMsg.set(`已追加到 ${fileName}`);
+          await loadAll();
+          selectedFileName = fileName;
+          await loadFileContent();
+          tab = "manage";
+        } catch (e) {
+          errorMsg.set(String(e));
+        }
+      } else {
+        // 新分类
+        try {
+          await api.createCategory(fileName, code, `AI 生成新分类 ${category}`);
+          successMsg.set(`已创建分类 ${fileName}`);
+          await loadAll();
+          selectedFileName = fileName;
+          await loadFileContent();
+          tab = "manage";
+        } catch (e) {
+          errorMsg.set(String(e));
+        }
+      }
+    } else {
+      // 无分类 → 让用户选择目标文件
+      errorMsg.set("AI 生成的代码未含 @DST-Category 块，请在管理页手动添加。");
+      tab = "manage";
+    }
+  }
+
   function fmtTime(secs: number): string {
     return new Date(secs * 1000).toLocaleString("zh-CN");
   }
@@ -142,19 +197,22 @@
   <header class="px-5 py-3 bg-slate-900/80 border-b border-slate-700 flex items-center justify-between">
     <div>
       <h1 class="text-lg font-bold text-cyan-300">DevShellTools Studio</h1>
-      <p class="text-xs text-slate-500">模板 v1.0.5 · M2 CRUD + 自动同步</p>
+      <p class="text-xs text-slate-500">模板 v1.0.5 · M3 AI 集成</p>
     </div>
-    <div class="flex gap-2">
-      {#if $workspace?.initialized}
-        <button class="px-3 py-1 text-xs bg-slate-700 hover:bg-slate-600 rounded" onclick={handleSync}>
-          同步公共部分
-        </button>
-        <button
-          class="px-3 py-1 text-xs bg-cyan-600 hover:bg-cyan-500 rounded"
-          onclick={() => (showNewDialog = true)}>新建分类</button
-        >
-      {/if}
-    </div>
+    <nav class="flex gap-1">
+      <button
+        class="px-3 py-1 text-xs rounded {tab === 'manage' ? 'bg-cyan-600 text-white' : 'bg-slate-700 text-slate-300 hover:bg-slate-600'}"
+        onclick={() => (tab = "manage")}>管理</button
+      >
+      <button
+        class="px-3 py-1 text-xs rounded {tab === 'chat' ? 'bg-cyan-600 text-white' : 'bg-slate-700 text-slate-300 hover:bg-slate-600'}"
+        onclick={() => (tab = "chat")}>AI 助手 {aiReady ? "" : "(未配置)"}</button
+      >
+      <button
+        class="px-3 py-1 text-xs rounded {tab === 'settings' ? 'bg-cyan-600 text-white' : 'bg-slate-700 text-slate-300 hover:bg-slate-600'}"
+        onclick={() => (tab = "settings")}>设置</button
+      >
+    </nav>
   </header>
 
   {#if $errorMsg}
@@ -190,7 +248,7 @@
         </button>
       </div>
     </div>
-  {:else}
+  {:else if tab === "manage"}
     <div class="flex-1 flex overflow-hidden">
       <CategoryList {categories} {selectedFileName} onSelect={onSelect} />
       <CategoryEditor
@@ -244,7 +302,38 @@
             {/each}
           </ul>
         {/if}
+
+        <div class="mt-4 flex gap-2">
+          <button class="px-2 py-1 text-xs bg-slate-700 hover:bg-slate-600 rounded" onclick={handleSync}>
+            同步公共部分
+          </button>
+          <button
+            class="px-2 py-1 text-xs bg-cyan-600 hover:bg-cyan-500 rounded"
+            onclick={() => (showNewDialog = true)}>新建分类</button
+          >
+        </div>
       </aside>
+    </div>
+  {:else if tab === "chat"}
+    <div class="flex-1 overflow-hidden">
+      {#if aiReady}
+        <ChatPanel onApplyCode={handleApplyCode} onOpenSettings={() => (tab = "settings")} />
+      {:else}
+        <div class="h-full flex items-center justify-center p-6">
+          <div class="text-center">
+            <p class="text-sm text-amber-300 mb-3">AI 未配置</p>
+            <p class="text-xs text-slate-400 mb-4">请先在设置页配置 API Key 和模型。</p>
+            <button
+              class="px-4 py-2 bg-cyan-600 hover:bg-cyan-500 rounded text-sm"
+              onclick={() => (tab = "settings")}>前往设置</button
+            >
+          </div>
+        </div>
+      {/if}
+    </div>
+  {:else if tab === "settings"}
+    <div class="flex-1 overflow-y-auto">
+      <AiSettings onClose={() => (tab = "manage")} />
     </div>
   {/if}
 

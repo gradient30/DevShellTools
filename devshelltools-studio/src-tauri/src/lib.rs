@@ -1,3 +1,5 @@
+pub mod ai_client;
+pub mod ai_config;
 pub mod commands;
 pub mod consistency;
 pub mod error;
@@ -36,6 +38,14 @@ pub fn run() {
             commands::git_log,
             commands::git_reset_hard,
             commands::git_snapshot,
+            // AI
+            commands::get_ai_config,
+            commands::save_ai_config,
+            commands::save_ai_key,
+            commands::get_ai_key_status,
+            commands::ai_ready,
+            commands::ai_chat,
+            commands::ai_chat_with_validation,
         ])
         .run(tauri::generate_context!())
         .expect("启动 DevShellTools Studio 失败");

@@ -51,6 +51,41 @@ export interface SafetyReport {
   violations: string[];
 }
 
+export type AiProtocol = "openai" | "anthropic";
+
+export interface AiConfig {
+  protocol: AiProtocol;
+  base_url: string;
+  model: string;
+  temperature: number;
+  max_tokens: number;
+}
+
+export interface AiKeyStatus {
+  configured: boolean;
+  masked: string;
+}
+
+export interface ChatMessage {
+  role: string;
+  content: string;
+}
+
+export interface ValidatedCodeBlock {
+  code: string;
+  syntax_ok: boolean;
+  syntax_err: string;
+  safety_ok: boolean;
+  safety_violations: string[];
+  functions: string[];
+  category: string | null;
+}
+
+export interface AiChatResult {
+  reply: string;
+  code_blocks: ValidatedCodeBlock[];
+}
+
 export const api = {
   // 工作区
   workspaceStatus: () => invoke<WorkspaceStatus>("workspace_status"),
@@ -79,5 +114,14 @@ export const api = {
   // Git
   gitLog: (n?: number) => invoke<CommitInfo[]>("git_log", { n }),
   gitResetHard: (oid: string) => invoke<void>("git_reset_hard", { oid }),
-  gitSnapshot: (message: string) => invoke<string>("git_snapshot", { message })
+  gitSnapshot: (message: string) => invoke<string>("git_snapshot", { message }),
+  // AI
+  getAiConfig: () => invoke<AiConfig>("get_ai_config"),
+  saveAiConfig: (config: AiConfig) => invoke<void>("save_ai_config", { config }),
+  saveAiKey: (key: string) => invoke<void>("save_ai_key", { key }),
+  getAiKeyStatus: () => invoke<AiKeyStatus>("get_ai_key_status"),
+  aiReady: () => invoke<boolean>("ai_ready"),
+  aiChat: (messages: ChatMessage[]) => invoke<string>("ai_chat", { messages }),
+  aiChatWithValidation: (messages: ChatMessage[]) =>
+    invoke<AiChatResult>("ai_chat_with_validation", { messages })
 };

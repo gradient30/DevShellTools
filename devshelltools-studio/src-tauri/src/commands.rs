@@ -1,3 +1,5 @@
+use crate::ai_client;
+use crate::ai_config::{self, AiConfig, ChatMessage};
 use crate::consistency;
 use crate::error::{DstError, DstResult};
 use crate::git;
@@ -191,6 +193,135 @@ pub fn git_snapshot(message: String) -> DstResult<String> {
     let oid = git::snapshot(&r, &message)?;
     workspace::touch_last_sync()?;
     Ok(oid)
+}
+
+// ============ AI 配置 ============
+
+/// 读取 AI 配置。
+#[tauri::command]
+pub fn get_ai_config() -> DstResult<AiConfig> {
+    ai_config::load_config()
+}
+
+/// 保存 AI 配置。
+#[tauri::command]
+pub fn save_ai_config(config: AiConfig) -> DstResult<()> {
+    ai_config::save_config(&config)
+}
+
+/// 保存 API Key（前端传明文，后端写文件）。
+#[tauri::command]
+pub fn save_ai_key(key: String) -> DstResult<()> {
+    ai_config::save_key(&key)
+}
+
+/// 读取 API Key（前端展示用，返回是否已配置 + 掩码）。
+#[tauri::command]
+pub fn get_ai_key_status() -> DstResult<AiKeyStatus> {
+    match ai_config::load_key() {
+        Ok(k) => {
+            let masked = if k.len() > 8 {
+                format!("{}...{}", &k[..4], &k[k.len() - 4..])
+            } else {
+                "****".into()
+            };
+            Ok(AiKeyStatus { configured: true, masked })
+        }
+        Err(_) => Ok(AiKeyStatus {
+            configured: false,
+            masked: String::new(),
+        }),
+    }
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct AiKeyStatus {
+    pub configured: bool,
+    pub masked: String,
+}
+
+/// 检测 AI 是否就绪（配置 + key 都存在）。
+#[tauri::command]
+pub fn ai_ready() -> bool {
+    ai_config::is_configured()
+}
+
+// ============ AI 对话 ============
+
+/// 发起一次 AI 对话（非流式，一次返回全部 delta）。
+/// 前端传历史消息，后端注入 system prompt 后请求 AI。
+#[tauri::command]
+pub async fn ai_chat(messages: Vec<ChatMessage>) -> DstResult<String> {
+    let config = ai_config::load_config()?;
+    let api_key = ai_config::load_key()?;
+    let events = ai_client::chat_stream(&config, &api_key, messages).await?;
+    // 拼接所有 delta
+    let full: String = events
+        .iter()
+        .filter(|e| e.kind == "delta")
+        .map(|e| e.content.as_str())
+        .collect();
+    Ok(full)
+}
+
+/// AI 对话并自动校验生成的代码。
+/// 返回 AI 回复 + 提取的代码块 + 每个代码块的安全/语法校验结果。
+#[tauri::command]
+pub async fn ai_chat_with_validation(
+    messages: Vec<ChatMessage>,
+) -> DstResult<AiChatResult> {
+    let reply = ai_chat(messages).await?;
+    let code_blocks = ai_config::extract_code_blocks(&reply);
+
+    let mut validated = vec![];
+    for code in &code_blocks {
+        let syntax_ok = ps_parser::validate_syntax(code).is_ok();
+        let syntax_err = match ps_parser::validate_syntax(code) {
+            Ok(_) => String::new(),
+            Err(e) => e.to_string(),
+        };
+        let safety_report = safety::check(code).unwrap_or(safety::SafetyReport {
+            ok: false,
+            violations: vec!["安全检查内部错误".into()],
+        });
+        let parsed = ps_parser::parse_ps1(code).ok();
+        let (functions, category) = parsed
+            .as_ref()
+            .map(|p| {
+                let fns: Vec<String> = p.functions.iter().map(|f| f.name.clone()).collect();
+                let cat = p.category.as_ref().map(|c| c.name.clone());
+                (fns, cat)
+            })
+            .unwrap_or_default();
+        validated.push(ValidatedCodeBlock {
+            code: code.clone(),
+            syntax_ok,
+            syntax_err,
+            safety_ok: safety_report.ok,
+            safety_violations: safety_report.violations,
+            functions,
+            category,
+        });
+    }
+
+    Ok(AiChatResult { reply, code_blocks: validated })
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct ValidatedCodeBlock {
+    pub code: String,
+    pub syntax_ok: bool,
+    pub syntax_err: String,
+    pub safety_ok: bool,
+    pub safety_violations: Vec<String>,
+    pub functions: Vec<String>,
+    pub category: Option<String>,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct AiChatResult {
+    pub reply: String,
+    pub code_blocks: Vec<ValidatedCodeBlock>,
 }
 
 #[cfg(test)]
