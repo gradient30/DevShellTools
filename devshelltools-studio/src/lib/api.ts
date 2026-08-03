@@ -86,6 +86,18 @@ export interface AiChatResult {
   code_blocks: ValidatedCodeBlock[];
 }
 
+export interface MigrationCheck {
+  has_legacy: boolean;
+  legacy_dirs: string[];
+  workspace_initialized: boolean;
+}
+
+export interface Webview2Status {
+  installed: boolean;
+  version: string;
+  needs_guidance: boolean;
+}
+
 export const api = {
   // 工作区
   workspaceStatus: () => invoke<WorkspaceStatus>("workspace_status"),
@@ -123,5 +135,14 @@ export const api = {
   aiReady: () => invoke<boolean>("ai_ready"),
   aiChat: (messages: ChatMessage[]) => invoke<string>("ai_chat", { messages }),
   aiChatWithValidation: (messages: ChatMessage[]) =>
-    invoke<AiChatResult>("ai_chat_with_validation", { messages })
+    invoke<AiChatResult>("ai_chat_with_validation", { messages }),
+  // M4：迁移 / 导出导入 / 日志 / WebView2
+  checkMigration: () => invoke<MigrationCheck>("check_migration"),
+  migrateLegacy: () => invoke<string[]>("migrate_legacy"),
+  exportWorkspace: (targetDir: string) => invoke<string>("export_workspace", { targetDir }),
+  importWorkspace: (sourceDir: string) => invoke<string[]>("import_workspace", { sourceDir }),
+  listLogs: () => invoke<string[]>("list_logs"),
+  readLog: (name: string) => invoke<string>("read_log", { name }),
+  webview2Status: () => invoke<Webview2Status>("webview2_status"),
+  webview2DownloadUrl: () => invoke<string>("webview2_download_url")
 };

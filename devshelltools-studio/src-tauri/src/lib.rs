@@ -3,11 +3,15 @@ pub mod ai_config;
 pub mod commands;
 pub mod consistency;
 pub mod error;
+pub mod export;
 pub mod git;
+pub mod logging;
+pub mod migrate;
 pub mod ps_parser;
 pub mod safety;
 pub mod sync;
 pub mod template;
+pub mod webview2;
 pub mod workspace;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -46,6 +50,15 @@ pub fn run() {
             commands::ai_ready,
             commands::ai_chat,
             commands::ai_chat_with_validation,
+            // M4：迁移 / 导出导入 / 日志 / WebView2
+            commands::check_migration,
+            commands::migrate_legacy,
+            commands::export_workspace,
+            commands::import_workspace,
+            commands::list_logs,
+            commands::read_log,
+            commands::webview2_status,
+            commands::webview2_download_url,
         ])
         .run(tauri::generate_context!())
         .expect("启动 DevShellTools Studio 失败");

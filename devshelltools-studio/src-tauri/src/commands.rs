@@ -2,10 +2,14 @@ use crate::ai_client;
 use crate::ai_config::{self, AiConfig, ChatMessage};
 use crate::consistency;
 use crate::error::{DstError, DstResult};
+use crate::export;
 use crate::git;
+use crate::logging;
+use crate::migrate;
 use crate::ps_parser;
 use crate::safety;
 use crate::sync::{self, CategoryInfo};
+use crate::webview2;
 use crate::workspace;
 
 fn root() -> std::path::PathBuf {
@@ -322,6 +326,62 @@ pub struct ValidatedCodeBlock {
 pub struct AiChatResult {
     pub reply: String,
     pub code_blocks: Vec<ValidatedCodeBlock>,
+}
+
+// ============ M4：迁移 / 导出导入 / 日志 / WebView2 ============
+
+/// 检测旧版 install.ps1 安装。
+#[tauri::command]
+pub fn check_migration() -> migrate::MigrationCheck {
+    migrate::check_migration()
+}
+
+/// 执行迁移：从旧版安装合并命令到便携工作区。
+#[tauri::command]
+pub fn migrate_legacy() -> DstResult<Vec<String>> {
+    let files = migrate::migrate_from_legacy()?;
+    logging::log(logging::LogLevel::Info, "migrate", &format!("迁移 {} 个文件", files.len()));
+    Ok(files)
+}
+
+/// 导出工作区到目录。
+#[tauri::command]
+pub fn export_workspace(target_dir: String) -> DstResult<String> {
+    let path = export::export_to(&target_dir)?;
+    logging::log(logging::LogLevel::Info, "export", &format!("导出到 {path}"));
+    Ok(path)
+}
+
+/// 从目录导入工作区。
+#[tauri::command]
+pub fn import_workspace(source_dir: String) -> DstResult<Vec<String>> {
+    let files = export::import_from(&source_dir)?;
+    logging::log(logging::LogLevel::Info, "import", &format!("导入 {} 项", files.len()));
+    Ok(files)
+}
+
+/// 列出日志文件。
+#[tauri::command]
+pub fn list_logs() -> Vec<String> {
+    logging::list_log_files()
+}
+
+/// 读取指定日志文件内容。
+#[tauri::command]
+pub fn read_log(name: String) -> DstResult<String> {
+    Ok(logging::read_log_file(&name))
+}
+
+/// WebView2 Runtime 状态。
+#[tauri::command]
+pub fn webview2_status() -> DstResult<webview2::Webview2Status> {
+    webview2::check_webview2()
+}
+
+/// WebView2 下载 URL。
+#[tauri::command]
+pub fn webview2_download_url() -> String {
+    webview2::WEBVIEW2_DOWNLOAD_URL.to_string()
 }
 
 #[cfg(test)]

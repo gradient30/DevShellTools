@@ -15,8 +15,9 @@
   import NewCategoryDialog from "./lib/components/NewCategoryDialog.svelte";
   import ChatPanel from "./lib/components/ChatPanel.svelte";
   import AiSettings from "./lib/components/AiSettings.svelte";
+  import ToolsPage from "./lib/components/ToolsPage.svelte";
 
-  type Tab = "manage" | "chat" | "settings";
+  type Tab = "manage" | "chat" | "settings" | "tools";
   let tab = $state<Tab>("manage");
 
   let categories = $state<CategoryInfo[]>([]);
@@ -197,7 +198,7 @@
   <header class="px-5 py-3 bg-slate-900/80 border-b border-slate-700 flex items-center justify-between">
     <div>
       <h1 class="text-lg font-bold text-cyan-300">DevShellTools Studio</h1>
-      <p class="text-xs text-slate-500">模板 v1.0.5 · M3 AI 集成</p>
+      <p class="text-xs text-slate-500">模板 v1.0.5 · M4 工具箱</p>
     </div>
     <nav class="flex gap-1">
       <button
@@ -207,6 +208,10 @@
       <button
         class="px-3 py-1 text-xs rounded {tab === 'chat' ? 'bg-cyan-600 text-white' : 'bg-slate-700 text-slate-300 hover:bg-slate-600'}"
         onclick={() => (tab = "chat")}>AI 助手 {aiReady ? "" : "(未配置)"}</button
+      >
+      <button
+        class="px-3 py-1 text-xs rounded {tab === 'tools' ? 'bg-cyan-600 text-white' : 'bg-slate-700 text-slate-300 hover:bg-slate-600'}"
+        onclick={() => (tab = "tools")}>工具箱</button
       >
       <button
         class="px-3 py-1 text-xs rounded {tab === 'settings' ? 'bg-cyan-600 text-white' : 'bg-slate-700 text-slate-300 hover:bg-slate-600'}"
@@ -334,6 +339,10 @@
   {:else if tab === "settings"}
     <div class="flex-1 overflow-y-auto">
       <AiSettings onClose={() => (tab = "manage")} />
+    </div>
+  {:else if tab === "tools"}
+    <div class="flex-1 overflow-y-auto">
+      <ToolsPage />
     </div>
   {/if}
 
