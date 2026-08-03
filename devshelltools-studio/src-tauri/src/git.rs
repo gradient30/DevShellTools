@@ -12,6 +12,11 @@ pub fn init_repo(root: &Path) -> DstResult<()> {
     if is_repo(root) {
         return Ok(());
     }
+    // .git 可能残留且非有效仓库（如 hook 文件冲突），清理后重新 init
+    let dot_git = root.join(".git");
+    if dot_git.exists() {
+        std::fs::remove_dir_all(&dot_git).ok();
+    }
     run_git(root, &["init"])?;
     run_git(root, &["config", "user.name", "DevShellTools Studio"])?;
     run_git(root, &["config", "user.email", "studio@devshelltools.local"])?;

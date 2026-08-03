@@ -7,10 +7,14 @@ use std::path::PathBuf;
 fn m1_acceptance_init_workspace_and_git_commit() {
     let tmp = make_tmp_user_profile();
     let original = env::var("USERPROFILE").unwrap_or_default();
-    env::set_var("USERPROFILE", tmp.parent().unwrap().to_str().unwrap());
+    // 直接用 tmp 作为 USERPROFILE（工作区将在 tmp/Documents/DevShellTools）
+    env::set_var("USERPROFILE", tmp.to_str().unwrap());
 
-    // 1. 初始状态：未初始化
-    assert!(!devshelltools_studio_lib::workspace::is_initialized());
+    // 1. 初始状态：未初始化（tmp 下不应有 Documents/DevShellTools）
+    assert!(
+        !devshelltools_studio_lib::workspace::is_initialized(),
+        "临时目录下不应已有工作区"
+    );
 
     // 2. 从模板初始化
     devshelltools_studio_lib::workspace::init_from_template()
@@ -67,7 +71,7 @@ fn m1_acceptance_init_workspace_and_git_commit() {
 fn make_tmp_user_profile() -> PathBuf {
     let mut p = env::temp_dir();
     p.push(format!(
-        "dst-m1-accept-{}-{}",
+        "dst-m1-profile-{}-{}",
         std::process::id(),
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
