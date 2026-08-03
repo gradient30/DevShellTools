@@ -1,0 +1,23 @@
+# Dependencies
+node_modules/
+
+# Build outputs
+dist/
+src-tauri/target/
+
+# IDE / OS
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
+
+# Tauri
+src-tauri/gen/schemas/
+src-tauri/WixTools/
+
+# Studio runtime (工作区元数据，不入库)
+.studio/
+
+# Logs
+*.log

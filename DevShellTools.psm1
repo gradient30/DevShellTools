@@ -1,0 +1,24 @@
+﻿
+Set-StrictMode -Version Latest
+
+$privateScripts = Get-ChildItem -LiteralPath (Join-Path $PSScriptRoot "Private") -Filter "*.ps1" -File
+foreach ($script in $privateScripts) { . $script.FullName }
+
+$publicScripts = Get-ChildItem -LiteralPath (Join-Path $PSScriptRoot "Public") -Filter "*.ps1" -File
+foreach ($script in $publicScripts) { . $script.FullName }
+
+# 移除会抢占函数的同名别名。
+foreach ($aliasName in @("ll")) {
+    Remove-Item "Alias:$aliasName" -ErrorAction SilentlyContinue
+}
+
+$exports = @(
+    "dsh",
+    "lt","ltf","ltd","ll","la","mkcd","up","up2","open","here","sz",
+    "super","isadmin","psb","reload","profile","which",
+    "lpr",
+    "gs","gb","gco","gsw","gswc","ga","gaa","gcmsg","gpp","gpl","gf","gg","gd","gds","grv","gclean",
+    "ports","port","myip","dns","pingx","curlh","nettest","killport"
+)
+
+Export-ModuleMember -Function $exports
