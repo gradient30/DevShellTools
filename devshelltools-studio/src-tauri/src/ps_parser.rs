@@ -1,4 +1,5 @@
 use crate::error::{DstError, DstResult};
+use crate::process_util::{output_hidden, ps_base_args};
 use serde::{Deserialize, Serialize};
 use std::process::Command;
 
@@ -57,6 +58,7 @@ where
 /// 调用 powershell.exe 解析 .ps1 文本，返回结构化结果。
 /// 把 content 通过临时文件传递，避免 stdin 管道死锁。
 pub fn parse_ps1(content: &str) -> DstResult<ParsedPsFile> {
+    let content = content.strip_prefix('\u{FEFF}').unwrap_or(content);
     let exe = which_powershell()?;
     // 写临时 .ps1 文件（带 BOM 让 PS5.1 正确识别 UTF-8）
     let mut tmp_path = std::env::temp_dir();
@@ -119,16 +121,12 @@ $result | ConvertTo-Json -Depth 5 -Compress
 "#
     );
 
-    let output = Command::new(exe)
-        .args([
-            "-NoProfile",
-            "-NonInteractive",
-            "-ExecutionPolicy",
-            "Bypass",
-            "-Command",
-            &script,
-        ])
-        .output()
+    let mut cmd = Command::new(exe);
+    for arg in ps_base_args(exe) {
+        cmd.arg(arg);
+    }
+    cmd.args(["-Command", &script]);
+    let output = output_hidden(cmd)
         .map_err(|e| DstError::PsParse(format!("启动 powershell 失败：{e}")))?;
 
     // 清理临时文件

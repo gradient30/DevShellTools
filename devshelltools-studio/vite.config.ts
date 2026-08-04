@@ -5,6 +5,8 @@ import tailwindcss from "@tailwindcss/vite";
 const host = process.env.TAURI_DEV_HOST;
 
 export default defineConfig({
+  // Tauri release 使用 tauri:// 协议，资源路径必须为相对路径
+  base: "./",
   plugins: [svelte(), tailwindcss()],
   clearScreen: false,
   server: {

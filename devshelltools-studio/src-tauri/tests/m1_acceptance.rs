@@ -1,16 +1,12 @@
-use std::env;
-use std::path::PathBuf;
+mod common;
 
 /// M1 端到端验收：模拟首次启动初始化工作区 + git 首次提交。
 /// 用临时 USERPROFILE 隔离，不影响真实工作区。
 #[test]
 fn m1_acceptance_init_workspace_and_git_commit() {
-    let tmp = make_tmp_user_profile();
-    let original = env::var("USERPROFILE").unwrap_or_default();
-    // 直接用 tmp 作为 USERPROFILE（工作区将在 tmp/Documents/DevShellTools）
-    env::set_var("USERPROFILE", tmp.to_str().unwrap());
+    let _profile = common::IsolatedProfile::new("m1");
 
-    // 1. 初始状态：未初始化（tmp 下不应有 Documents/DevShellTools）
+    // 1. 初始状态：未初始化
     assert!(
         !devshelltools_studio_lib::workspace::is_initialized(),
         "临时目录下不应已有工作区"
@@ -62,22 +58,4 @@ fn m1_acceptance_init_workspace_and_git_commit() {
     assert_eq!(status.version, "1.0.5");
     assert!(status.public_files.contains(&"Files.ps1".to_string()));
     assert!(status.public_files.contains(&"test-new.ps1".to_string()));
-
-    // 清理
-    env::set_var("USERPROFILE", original);
-    let _ = std::fs::remove_dir_all(&tmp);
-}
-
-fn make_tmp_user_profile() -> PathBuf {
-    let mut p = env::temp_dir();
-    p.push(format!(
-        "dst-m1-profile-{}-{}",
-        std::process::id(),
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
-    ));
-    std::fs::create_dir_all(&p).unwrap();
-    p
 }

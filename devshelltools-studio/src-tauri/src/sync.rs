@@ -1,6 +1,8 @@
 use crate::error::DstResult;
 use crate::ps_parser::{self, CategoryMeta, PsFunction};
 use crate::workspace;
+use std::sync::Mutex;
+use std::time::SystemTime;
 
 /// 一个分类的完整信息（元数据 + 函数列表 + 文件名）。
 #[derive(Debug, Clone, serde::Serialize)]
@@ -8,6 +10,57 @@ pub struct CategoryInfo {
     pub file_name: String,   // 如 "Git.ps1"
     pub category: CategoryMeta,
     pub functions: Vec<PsFunction>,
+}
+
+struct CategoryCache {
+    stamp: u64,
+    data: Vec<CategoryInfo>,
+}
+
+static CATEGORY_CACHE: Mutex<Option<CategoryCache>> = Mutex::new(None);
+
+fn public_stamp() -> u64 {
+    let public = workspace::workspace_root().join("Public");
+    if !public.exists() {
+        return 0;
+    }
+    let mut max = 0u64;
+    if let Ok(entries) = std::fs::read_dir(&public) {
+        for e in entries.flatten() {
+            if let Ok(m) = e.metadata().and_then(|m| m.modified()) {
+                if let Ok(d) = m.duration_since(SystemTime::UNIX_EPOCH) {
+                    max = max.max(d.as_secs());
+                }
+            }
+        }
+    }
+    max
+}
+
+pub fn invalidate_category_cache() {
+    if let Ok(mut g) = CATEGORY_CACHE.lock() {
+        *g = None;
+    }
+}
+
+/// 扫描工作区 Public/ 下所有 .ps1 文件，返回分类列表（带 mtime 缓存）。
+pub fn scan_categories_cached() -> DstResult<Vec<CategoryInfo>> {
+    let stamp = public_stamp();
+    if let Ok(g) = CATEGORY_CACHE.lock() {
+        if let Some(c) = g.as_ref() {
+            if c.stamp == stamp {
+                return Ok(c.data.clone());
+            }
+        }
+    }
+    let data = scan_categories()?;
+    if let Ok(mut g) = CATEGORY_CACHE.lock() {
+        *g = Some(CategoryCache {
+            stamp,
+            data: data.clone(),
+        });
+    }
+    Ok(data)
 }
 
 /// 扫描工作区 Public/ 下所有 .ps1 文件，返回分类列表。

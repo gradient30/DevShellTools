@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 
 export interface WorkspaceStatus {
   initialized: boolean;
@@ -9,6 +10,12 @@ export interface WorkspaceStatus {
   last_sync: string;
   missing_files: string[];
   public_files: string[];
+}
+
+export interface InitProgress {
+  step: number;
+  label: string;
+  percent: number;
 }
 
 export interface CommitInfo {
@@ -61,6 +68,17 @@ export interface AiConfig {
   max_tokens: number;
 }
 
+export interface AiProfile {
+  id: string;
+  name: string;
+  protocol: AiProtocol;
+  base_url: string;
+  model: string;
+  temperature: number;
+  max_tokens: number;
+  key_configured: boolean;
+}
+
 export interface AiKeyStatus {
   configured: boolean;
   masked: string;
@@ -98,16 +116,29 @@ export interface Webview2Status {
   needs_guidance: boolean;
 }
 
+export interface InstallStatus {
+  workspace_ready: boolean;
+  ps51_module_present: boolean;
+  ps7_module_present: boolean;
+  profile_configured: boolean;
+  installed: boolean;
+}
+
+export interface FunctionTestResult {
+  ok: boolean;
+  stdout: string;
+  stderr: string;
+}
+
 export const api = {
-  // 工作区
   workspaceStatus: () => invoke<WorkspaceStatus>("workspace_status"),
   initWorkspace: () => invoke<string>("init_workspace"),
-  // 读取
+  onInitProgress: (handler: (p: InitProgress) => void) =>
+    listen<InitProgress>("init-progress", (e) => handler(e.payload)),
   listPublicFiles: () => invoke<string[]>("list_public_files"),
   readWorkspaceFile: (rel: string) => invoke<string>("read_workspace_file", { rel }),
   listCategories: () => invoke<CategoryInfo[]>("list_categories"),
   readCategoryFile: (fileName: string) => invoke<string>("read_category_file", { fileName }),
-  // CRUD
   writeWorkspaceFile: (rel: string, content: string, message: string) =>
     invoke<string>("write_workspace_file", { rel, content, message }),
   deleteWorkspaceFile: (rel: string, message: string) =>
@@ -119,24 +150,57 @@ export const api = {
   updateCategoryFile: (fileName: string, content: string, message: string) =>
     invoke<string>("update_category_file", { fileName, content, message }),
   syncPublic: (message: string) => invoke<string>("sync_public", { message }),
-  // 校验
+  upsertFunction: (
+    fileName: string,
+    name: string,
+    synopsis: string,
+    example: string,
+    body: string | null,
+    message: string
+  ) =>
+    invoke<string>("upsert_function", {
+      fileName,
+      name,
+      synopsis,
+      example,
+      body,
+      message
+    }),
+  deleteFunction: (fileName: string, funcName: string, message: string) =>
+    invoke<string>("delete_function", { fileName, funcName, message }),
+  testFunction: (fileName: string, funcName: string) =>
+    invoke<FunctionTestResult>("test_function", { fileName, funcName }),
+  applyAiCode: (fileName: string, code: string, message: string) =>
+    invoke<string[]>("apply_ai_code", { fileName, code, message }),
+  installStatus: () => invoke<InstallStatus>("install_status"),
+  installModule: () => invoke<InstallStatus>("install_module"),
+  uninstallModule: () => invoke<InstallStatus>("uninstall_module"),
   consistencyCheck: () => invoke<ConsistencyReport>("consistency_check"),
   safetyCheck: (code: string) => invoke<SafetyReport>("safety_check", { code }),
   validatePsSyntax: (code: string) => invoke<void>("validate_ps_syntax", { code }),
-  // Git
   gitLog: (n?: number) => invoke<CommitInfo[]>("git_log", { n }),
   gitResetHard: (oid: string) => invoke<void>("git_reset_hard", { oid }),
   gitSnapshot: (message: string) => invoke<string>("git_snapshot", { message }),
-  // AI
   getAiConfig: () => invoke<AiConfig>("get_ai_config"),
   saveAiConfig: (config: AiConfig) => invoke<void>("save_ai_config", { config }),
   saveAiKey: (key: string) => invoke<void>("save_ai_key", { key }),
   getAiKeyStatus: () => invoke<AiKeyStatus>("get_ai_key_status"),
   aiReady: () => invoke<boolean>("ai_ready"),
-  aiChat: (messages: ChatMessage[]) => invoke<string>("ai_chat", { messages }),
-  aiChatWithValidation: (messages: ChatMessage[]) =>
-    invoke<AiChatResult>("ai_chat_with_validation", { messages }),
-  // M4：迁移 / 导出导入 / 日志 / WebView2
+  listAiProfiles: () => invoke<AiProfile[]>("list_ai_profiles"),
+  getAiProfilesMeta: () =>
+    invoke<{ profiles: AiProfile[]; default_profile_id: string | null }>("get_ai_profiles_meta"),
+  saveAiProfile: (profile: AiProfile, key?: string) =>
+    invoke<AiProfile>("save_ai_profile", { input: { profile, key: key ?? null } }),
+  deleteAiProfile: (id: string) => invoke<void>("delete_ai_profile", { id }),
+  setDefaultAiProfile: (id: string) => invoke<void>("set_default_ai_profile", { id }),
+  testAiProfile: (id: string) => invoke<string>("test_ai_profile", { id }),
+  aiChat: (messages: ChatMessage[], profileId?: string) =>
+    invoke<string>("ai_chat", { messages, profileId: profileId ?? null }),
+  aiChatWithValidation: (messages: ChatMessage[], profileId?: string) =>
+    invoke<AiChatResult>("ai_chat_with_validation", {
+      messages,
+      profileId: profileId ?? null
+    }),
   checkMigration: () => invoke<MigrationCheck>("check_migration"),
   migrateLegacy: () => invoke<string[]>("migrate_legacy"),
   exportWorkspace: (targetDir: string) => invoke<string>("export_workspace", { targetDir }),

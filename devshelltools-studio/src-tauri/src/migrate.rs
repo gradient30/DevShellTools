@@ -1,19 +1,43 @@
 use crate::error::{DstError, DstResult};
 use crate::workspace;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
-/// 旧版 install.ps1 安装的两个目标目录
-fn legacy_install_dirs() -> Vec<PathBuf> {
-    let docs = std::env::var("USERPROFILE")
+fn documents_dir() -> PathBuf {
+    std::env::var("USERPROFILE")
         .map(|p| PathBuf::from(p).join("Documents"))
-        .unwrap_or_else(|_| PathBuf::from("."));
+        .unwrap_or_else(|_| PathBuf::from("."))
+}
+
+/// 可能含有待迁移命令的目录：旧 Studio 沙箱 + install.ps1 的两个目标目录。
+fn legacy_source_dirs() -> Vec<PathBuf> {
+    let docs = documents_dir();
     vec![
-        docs.join("WindowsPowerShell").join("Modules").join("DevShellTools"),
+        docs.join("DevShellTools"),
+        docs.join("WindowsPowerShell")
+            .join("Modules")
+            .join("DevShellTools"),
         docs.join("PowerShell").join("Modules").join("DevShellTools"),
     ]
 }
 
-/// 检测旧版安装（install.ps1 装的副本是否存在）。
+fn same_path(a: &Path, b: &Path) -> bool {
+    match (a.canonicalize(), b.canonicalize()) {
+        (Ok(a), Ok(b)) => a == b,
+        _ => a.to_string_lossy().eq_ignore_ascii_case(&b.to_string_lossy()),
+    }
+}
+
+/// 旧版 install.ps1 / 旧 Studio 工作区中，且不同于当前工作区根目录的来源。
+fn discover_legacy_dirs() -> Vec<PathBuf> {
+    let ws = workspace::workspace_root();
+    legacy_source_dirs()
+        .into_iter()
+        .filter(|d| !same_path(d, &ws))
+        .filter(|d| d.exists() && d.join("DevShellTools.psd1").exists())
+        .collect()
+}
+
+/// 检测旧版安装（install.ps1 或旧 Studio 沙箱是否存在可迁移内容）。
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct MigrationCheck {
     pub has_legacy: bool,
@@ -22,9 +46,8 @@ pub struct MigrationCheck {
 }
 
 pub fn check_migration() -> MigrationCheck {
-    let legacy: Vec<String> = legacy_install_dirs()
+    let legacy: Vec<String> = discover_legacy_dirs()
         .iter()
-        .filter(|d| d.exists() && d.join("DevShellTools.psd1").exists())
         .map(|d| d.display().to_string())
         .collect();
     MigrationCheck {
@@ -53,8 +76,8 @@ pub fn migrate_from_legacy() -> DstResult<Vec<String>> {
     let ws_root = workspace::workspace_root();
     let ws_public = ws_root.join("Public");
 
-    for legacy_dir in &check.legacy_dirs {
-        let legacy_public = PathBuf::from(legacy_dir).join("Public");
+    for legacy_dir in discover_legacy_dirs() {
+        let legacy_public = legacy_dir.join("Public");
         if !legacy_public.exists() {
             continue;
         }
@@ -74,8 +97,9 @@ pub fn migrate_from_legacy() -> DstResult<Vec<String>> {
 
     // 重生成公共部分 + git 快照
     crate::sync::regenerate_all()?;
+    crate::sync::invalidate_category_cache();
     let root = workspace::workspace_root();
-    crate::git::snapshot(&root, "migrate: 从旧版 install.ps1 迁移命令")?;
+    crate::git::snapshot(&root, "migrate: 从旧版安装迁移命令")?;
     workspace::touch_last_sync()?;
 
     Ok(migrated)
@@ -87,15 +111,19 @@ mod tests {
 
     #[test]
     fn legacy_dirs_check() {
-        let dirs = legacy_install_dirs();
+        let dirs = legacy_source_dirs();
+        assert!(dirs.iter().any(|d| d.to_string_lossy().ends_with("DevShellTools")));
         assert!(dirs.iter().any(|d| d.to_string_lossy().contains("WindowsPowerShell")));
-        assert!(dirs.iter().any(|d| d.to_string_lossy().contains("PowerShell")));
+        assert!(dirs.iter().any(|d| {
+            d.to_string_lossy()
+                .contains("Documents\\DevShellTools")
+                || d.to_string_lossy().contains("Documents/DevShellTools")
+        }));
     }
 
     #[test]
     fn migration_check_returns_struct() {
         let check = check_migration();
-        // 测试环境通常无旧版，但结构应正确
-        assert!(check.legacy_dirs.len() <= 2);
+        assert!(check.legacy_dirs.len() <= 3);
     }
 }

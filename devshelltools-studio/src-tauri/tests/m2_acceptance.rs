@@ -1,43 +1,16 @@
 #![allow(dead_code)]
 
+mod common;
+
 #[cfg(test)]
 mod tests {
+    use crate::common::IsolatedProfile;
     use devshelltools_studio_lib::consistency;
     use devshelltools_studio_lib::git;
     use devshelltools_studio_lib::ps_parser;
     use devshelltools_studio_lib::safety;
     use devshelltools_studio_lib::sync;
     use devshelltools_studio_lib::workspace;
-    use std::env;
-    use std::path::PathBuf;
-
-    struct ProfileGuard {
-        original: String,
-        tmp: PathBuf,
-    }
-
-    impl Drop for ProfileGuard {
-        fn drop(&mut self) {
-            env::set_var("USERPROFILE", &self.original);
-            let _ = std::fs::remove_dir_all(&self.tmp);
-        }
-    }
-
-    fn isolated_profile() -> ProfileGuard {
-        let original = env::var("USERPROFILE").unwrap_or_default();
-        let mut p = env::temp_dir();
-        p.push(format!(
-            "dst-m2-profile-{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
-        std::fs::create_dir_all(&p).unwrap();
-        env::set_var("USERPROFILE", p.to_str().unwrap());
-        ProfileGuard { original, tmp: p }
-    }
 
     fn ensure_initialized() {
         if !workspace::is_initialized() {
@@ -49,7 +22,7 @@ mod tests {
 
     #[test]
     fn m2_e2e_baseline_consistency() {
-        let _g = isolated_profile();
+        let _g = IsolatedProfile::new("m2");
         ensure_initialized();
         // 确保无测试残留：若 Docker.ps1 存在则删除并重生成
         if workspace::read_file("Public/Docker.ps1").is_ok() {
@@ -71,7 +44,7 @@ mod tests {
 
     #[test]
     fn m2_e2e_create_category_and_sync() {
-        let _g = isolated_profile();
+        let _g = IsolatedProfile::new("m2");
         ensure_initialized();
         // 构造一个新分类 Docker
         let docker_code = r#"<#!
@@ -151,7 +124,7 @@ dps
 
     #[test]
     fn m2_e2e_safety_blocks_dangerous() {
-        let _g = isolated_profile();
+        let _g = IsolatedProfile::new("m2");
         let bad = r#"
 function badpush {
     git push --force origin main
@@ -164,7 +137,7 @@ function badpush {
 
     #[test]
     fn m2_e2e_syntax_error_rejected() {
-        let _g = isolated_profile();
+        let _g = IsolatedProfile::new("m2");
         let bad = "function { broken";
         let r = ps_parser::validate_syntax(bad);
         assert!(r.is_err(), "语法错误应被拒绝");

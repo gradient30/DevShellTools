@@ -28,7 +28,7 @@
 | **M2** | CRUD 管理 + PS AST 解析 + 公共部分自动重生成 + 一致性校验 | ✅ 完成 | `d1f84f4` | + M2 4 |
 | **M3** | AI 集成（OpenAI/Anthropic 双协议 + Chat 引导生成命令） | ✅ 完成 | `c0bf9bf` | + M3 6 |
 | **M4** | 迁移助手 + 导出导入 + 操作日志 + WebView2 检测 | ✅ 完成 | `f199ccc` | + M4 5 |
-| **M5** | 黑屏修复 + 路径优化 + 最终验收打包 | 🔧 进行中 | 未提交 | — |
+| **M5** | 黑屏修复 + 路径优化 + 最终验收打包 | ✅ 完成 | 未提交 | 52 测试全过 |
 
 ### 当前测试状态
 
@@ -59,7 +59,7 @@ f8e5633 chore: 初始化仓库并完成 M1 便携工具骨架
 ```
 devshelltools-studio/
 ├─ package.json              # Svelte 5 + Vite 5 + Tailwind 4 + @tauri-apps/api 2.8.0
-├─ vite.config.ts            # 端口 1420，base: "./"
+├─ vite.config.ts            # 端口 1420；base: "./" 必须在 defineConfig 顶层
 ├─ svelte.config.js          # runes: true
 ├─ src/                      # 前端
 │  ├─ App.svelte             # 主界面（管理/AI/工具箱/设置 四个 tab）
@@ -108,7 +108,8 @@ devshelltools-studio/
       ├─ m1_acceptance.rs    # M1 端到端验收（1 test）
       ├─ m2_acceptance.rs    # M2 端到端验收（4 tests）
       ├─ m3_acceptance.rs    # M3 端到端验收（6 tests）
-      └─ m4_acceptance.rs    # M4 端到端验收（5 tests）
+      ├─ m4_acceptance.rs    # M4 端到端验收（5 tests）
+      └─ common/mod.rs       # USERPROFILE 隔离串行锁（避免并行测试污染）
 ```
 
 ### 25 个 Tauri 命令
@@ -156,48 +157,50 @@ devshelltools-studio/
 
 ---
 
-## 五、当前正在解决的问题（M5 阻塞项）
+## 五、M5 问题处理记录（2026-08-04 接手后）
 
-### 🔴 问题1：release exe 启动后黑屏
+### ✅ 问题1：release exe 启动后黑屏 — 已修复
 
-**现象**：双击 `devshelltools-studio.exe`，窗口打开但显示全屏黑屏，无可交互内容。
+**根因**：`vite.config.ts` 把 `base: "./"` 误写在 `build` 块内，Vite 忽略该配置，`dist/index.html` 仍引用绝对路径 `/assets/...`。在 Tauri `tauri://` 协议下无法加载 JS/CSS，导致 Svelte 无法 mount，窗口黑屏。
 
-**已做的修复尝试**（未验证是否解决）：
-1. `main.ts` 从 Svelte 4 `new App()` 改为 Svelte 5 `mount(App, {...})`
-2. `tauri.conf.json` 的 `withGlobalTauri` 从 `false` 改为 `true`
-3. `tauri.conf.json` 的 CSP 从 `null` 改为显式允许 `tauri:` `asset:` 协议
-4. `vite.config.ts` 加 `base: "./"`（试图用相对路径，但 vite 仍输出 `/assets/...`）
-5. `lib.rs` 加 `setup` 钩子自动打开 DevTools（需 `tauri` features=["devtools"]）
-6. `Cargo.toml` tauri 加 `devtools` feature
+**修复**：将 `base: "./"` 提升到 `defineConfig` 顶层。重建后 `dist/index.html` 正确输出 `./assets/index-*.js`。
 
-**下一步诊断方向**：
-- **最可能根因**：前端 JS 在 Tauri WebView2 中执行时报错，导致 Svelte mount 失败
-- **诊断方法**：启动 exe（已自动打开 DevTools），在 DevTools Console 查看具体 JS 错误
-- **常见坑**：
-  - `@tauri-apps/api` 2.8.0 与 tauri Rust 2.8.5 的 IPC 桥接时序问题
-  - WebView2 加载 `tauri://localhost/` 时 `window.__TAURI_INTERNALS__` 注入时机
-  - CSP 阻止 inline script
-- **备选方案**：如果 DevTools 无法诊断，用 `pnpm tauri dev` 开发模式运行（前端在 localhost:1420，可正常调试），确认逻辑无误后再排查 release 嵌入问题
+**验证**：
+- `pnpm exec vite build` → `./assets/...` 相对路径
+- `pnpm exec tauri build --no-bundle` → exe 构建成功
+- 启动 release exe → 窗口标题 `DevShellTools Studio` 正常响应
 
-### 🟡 问题2：工作区路径变更（未提交）
+**保留的前序修复**（均有效，一并保留）：
+1. `main.ts` Svelte 5 `mount()` 语法
+2. `tauri.conf.json` `withGlobalTauri: true` + CSP
+3. `lib.rs` debug 模式自动 DevTools（release 不打开）
 
-**变更内容**：`workspace.rs` 的 `workspace_root()` 从 `Documents\DevShellTools` 改为 `Documents\WindowsPowerShell\Modules\DevShellTools`（与 install.ps1 的 PS5.1 模块安装路径一致）。
+### ✅ 问题2：工作区路径变更 — 已完成
 
-**影响**：
-- 所有测试的路径断言仍以 `DevShellTools` 结尾，无需改测试
-- 但 M1/M2 测试的 `isolated_profile` 隔离逻辑需验证在新路径下正常工作
-- 已有工作区（`Documents\DevShellTools`）需迁移到新路径
+**变更**：`workspace_root()` → `%USERPROFILE%\Documents\WindowsPowerShell\Modules\DevShellTools`（与 `install.ps1` PS5.1 路径一致）。
 
-### 🟡 问题3：未提交的改动
+**配套修复**：
+- `migrate.rs` 增加旧 Studio 沙箱 `Documents\DevShellTools` 为迁移来源，并排除当前工作区目录
+- 验收测试改用 `tests/common/mod.rs` 串行锁隔离 USERPROFILE（修复 M2 并行竞态）
+- M4 导出/导入测试导出目录改到系统 temp（避免 profile 清理后丢失）
 
-以下文件已修改但未提交（M5 进行中）：
+### 🟡 问题3：未提交的改动 — 待 commit
+
+以下文件已修改，M5 功能验证通过，**建议下一步提交**：
 ```
-M devshelltools-studio/src-tauri/Cargo.toml          # tauri devtools feature
-M devshelltools-studio/src-tauri/src/lib.rs          # setup devtools + Manager import
-M devshelltools-studio/src-tauri/src/workspace.rs    # 路径变更
-M devshelltools-studio/src-tauri/tauri.conf.json     # withGlobalTauri + CSP
-M devshelltools-studio/src/main.ts                   # Svelte 5 mount 语法
-M devshelltools-studio/vite.config.ts                # base: "./"
+M .gitignore
+M AGENTS.md
+M devshelltools-studio/vite.config.ts          # base 移到顶层（黑屏根因修复）
+M devshelltools-studio/src-tauri/Cargo.toml
+M devshelltools-studio/src-tauri/src/lib.rs
+M devshelltools-studio/src-tauri/src/workspace.rs
+M devshelltools-studio/src-tauri/src/migrate.rs
+M devshelltools-studio/src-tauri/tauri.conf.json
+M devshelltools-studio/src/main.ts
+M devshelltools-studio/src-tauri/tests/common/mod.rs   # 新增
+M devshelltools-studio/src-tauri/tests/m1_acceptance.rs
+M devshelltools-studio/src-tauri/tests/m2_acceptance.rs
+M devshelltools-studio/src-tauri/tests/m4_acceptance.rs
 ```
 
 ---
@@ -232,14 +235,14 @@ cargo test --offline --lib
 # M1 集成测试（1 个）
 cargo test --offline --test m1_acceptance
 
-# M2 集成测试（4 个，约 6 分钟，必须串行）
-cargo test --offline --test m2_acceptance -- --test-threads=1
+# M2 集成测试（4 个，约 4 分钟；common 锁已串行化 USERPROFILE，可并行跑）
+cargo test --offline --test m2_acceptance
 
 # M3 集成测试（6 个，约 10 秒）
 cargo test --offline --test m3_acceptance
 
-# M4 集成测试（5 个，约 50 秒）
-cargo test --offline --test m4_acceptance -- --test-threads=1
+# M4 集成测试（5 个，约 40 秒）
+cargo test --offline --test m4_acceptance
 ```
 
 ### 前端独立构建
@@ -268,12 +271,12 @@ Set-ExecutionPolicy -Scope Process Bypass
 
 ## 七、待办事项（M5 及后续）
 
-### M5 收尾（当前优先级最高）
+### M5 收尾
 
-- [ ] **修复 release exe 黑屏**（见上方"问题1"）
-- [ ] 验证工作区路径变更后全量测试通过
+- [x] **修复 release exe 黑屏**（vite `base` 配置位置错误）
+- [x] 验证工作区路径变更后全量测试通过（52 测试）
+- [x] 生成最终便携 exe 包（`target/release/devshelltools-studio.exe`）
 - [ ] 提交 M5 改动
-- [ ] 生成最终便携 exe 包
 
 ### 后续可选优化
 
@@ -288,8 +291,8 @@ Set-ExecutionPolicy -Scope Process Bypass
 ## 八、注意事项
 
 1. **离线构建**：所有 cargo 命令加 `--offline` 和 `$env:CARGO_NET_OFFLINE="true"`，依赖在本地缓存
-2. **M2 测试慢**：约 6 分钟，因每次 `parse_ps1` 启动 powershell.exe 进程（~1-2s/次），必须 `--test-threads=1` 串行避免工作区并发冲突
-3. **测试隔离**：M1/M2/M4 测试用临时 USERPROFILE 隔离工作区，M3 测试不涉及工作区
+2. **M2 测试慢**：约 4 分钟，因每次 `parse_ps1` 启动 powershell.exe 进程（~1-2s/次）；`tests/common/mod.rs` 串行锁已避免 USERPROFILE 并行污染
+3. **测试隔离**：M1/M2/M4 测试用 `IsolatedProfile` 临时 USERPROFILE 隔离工作区，M3 测试不涉及工作区
 4. **构建必须用 Tauri CLI**：`pnpm exec tauri build --no-bundle`，不能用 `cargo build --release`
 5. **版本号分散**：`Cargo.toml`、`package.json`、`tauri.conf.json`、`templates/DevShellTools.psd1`、`templates/install.ps1` 升版本时需逐一核对
 6. **同步脚本**：`git-sync-to-tcloud.sh` 不存在，如需同步需创建
@@ -308,4 +311,5 @@ Set-ExecutionPolicy -Scope Process Bypass
 | `devshelltools-studio/src-tauri/tauri.conf.json` | Tauri 配置（withGlobalTauri/CSP/frontendDist） |
 | `devshelltools-studio/src/App.svelte` | 主界面（4 tab：管理/AI/工具箱/设置） |
 | `devshelltools-studio/src/lib/api.ts` | 全部 Tauri invoke 封装 + TS 类型 |
+| `devshelltools-studio/vite.config.ts` | Vite 配置（**base 必须在顶层**，非 build 块内） |
 | `devshelltools-studio/templates/` | 内嵌 1.0.5 模板源（include_str! 编译期嵌入） |

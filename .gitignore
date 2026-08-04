@@ -1,9 +1,12 @@
 # Dependencies
 node_modules/
+devshelltools-studio/node_modules/
 
 # Build outputs
 dist/
+devshelltools-studio/dist/
 src-tauri/target/
+devshelltools-studio/src-tauri/target/
 
 # IDE / OS
 .vscode/
@@ -11,10 +14,15 @@ src-tauri/target/
 *.swp
 .DS_Store
 Thumbs.db
+.playwright-mcp/
 
 # Tauri
+src-tauri/gen/
+devshelltools-studio/src-tauri/gen/
 src-tauri/gen/schemas/
+devshelltools-studio/src-tauri/gen/schemas/
 src-tauri/WixTools/
+devshelltools-studio/src-tauri/WixTools/
 
 # Studio runtime (工作区元数据，不入库)
 .studio/

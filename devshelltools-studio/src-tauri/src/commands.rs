@@ -1,9 +1,12 @@
 use crate::ai_client;
-use crate::ai_config::{self, AiConfig, ChatMessage};
+use crate::ai_config::{self, AiConfig, AiProfile, ChatMessage};
 use crate::consistency;
 use crate::error::{DstError, DstResult};
 use crate::export;
+use crate::function_edit::{self, FunctionDraft, FunctionTestResult};
 use crate::git;
+use crate::init_progress;
+use crate::install_mgr;
 use crate::logging;
 use crate::migrate;
 use crate::ps_parser;
@@ -11,6 +14,7 @@ use crate::safety;
 use crate::sync::{self, CategoryInfo};
 use crate::webview2;
 use crate::workspace;
+use tauri::AppHandle;
 
 fn root() -> std::path::PathBuf {
     workspace::workspace_root()
@@ -24,17 +28,8 @@ pub fn workspace_status() -> DstResult<workspace::WorkspaceStatus> {
 }
 
 #[tauri::command]
-pub fn init_workspace() -> DstResult<String> {
-    if workspace::is_initialized() {
-        return Err(DstError::WorkspaceExists(
-            workspace::workspace_root().display().to_string(),
-        ));
-    }
-    workspace::init_from_template()?;
-    let r = root();
-    git::init_repo(&r)?;
-    workspace::touch_last_sync()?;
-    git::head_oid(&r)
+pub fn init_workspace(app: AppHandle) -> DstResult<String> {
+    init_progress::init_with_progress(&app)
 }
 
 // ============ 读取 ============
@@ -52,7 +47,7 @@ pub fn read_workspace_file(rel: String) -> DstResult<String> {
 /// 列出所有分类及其函数（前端展示用）。
 #[tauri::command]
 pub fn list_categories() -> DstResult<Vec<CategoryInfo>> {
-    sync::scan_categories()
+    sync::scan_categories_cached()
 }
 
 /// 读取某分类文件的完整内容。
@@ -107,6 +102,7 @@ pub fn create_category(
     // 语法校验
     ps_parser::validate_syntax(&content)?;
     workspace::write_file(&rel, &content)?;
+    sync::invalidate_category_cache();
     sync::regenerate_all()?;
     let r = root();
     let oid = git::snapshot(&r, &format!("新建分类：{message}"))?;
@@ -119,6 +115,7 @@ pub fn create_category(
 pub fn delete_category(file_name: String, message: String) -> DstResult<String> {
     let rel = format!("Public/{file_name}");
     workspace::delete_file(&rel)?;
+    sync::invalidate_category_cache();
     sync::regenerate_all()?;
     let r = root();
     let oid = git::snapshot(&r, &format!("删除分类：{message}"))?;
@@ -140,6 +137,7 @@ pub fn update_category_file(
     }
     ps_parser::validate_syntax(&content)?;
     workspace::write_file(&rel, &content)?;
+    sync::invalidate_category_cache();
     sync::regenerate_all()?;
     let r = root();
     let oid = git::snapshot(&r, &format!("更新分类：{message}"))?;
@@ -151,10 +149,74 @@ pub fn update_category_file(
 #[tauri::command]
 pub fn sync_public(message: String) -> DstResult<String> {
     sync::regenerate_all()?;
+    sync::invalidate_category_cache();
     let r = root();
     let oid = git::snapshot(&r, &message)?;
     workspace::touch_last_sync()?;
     Ok(oid)
+}
+
+// ============ 函数级 CRUD ============
+
+#[tauri::command]
+pub fn upsert_function(
+    file_name: String,
+    name: String,
+    synopsis: String,
+    example: String,
+    body: Option<String>,
+    message: String,
+) -> DstResult<String> {
+    function_edit::upsert_function(
+        &file_name,
+        FunctionDraft {
+            name,
+            synopsis,
+            example,
+            body,
+        },
+        &message,
+    )
+}
+
+#[tauri::command]
+pub fn delete_function(
+    file_name: String,
+    func_name: String,
+    message: String,
+) -> DstResult<String> {
+    function_edit::delete_function(&file_name, &func_name, &message)
+}
+
+#[tauri::command]
+pub fn test_function(file_name: String, func_name: String) -> DstResult<FunctionTestResult> {
+    function_edit::test_function(&file_name, &func_name)
+}
+
+#[tauri::command]
+pub fn apply_ai_code(
+    file_name: String,
+    code: String,
+    message: String,
+) -> DstResult<Vec<String>> {
+    function_edit::apply_code_to_category(&file_name, &code, &message)
+}
+
+// ============ 安装 / 卸载 ============
+
+#[tauri::command]
+pub fn install_status() -> install_mgr::InstallStatus {
+    install_mgr::install_status()
+}
+
+#[tauri::command]
+pub fn install_module() -> DstResult<install_mgr::InstallStatus> {
+    install_mgr::install_module()
+}
+
+#[tauri::command]
+pub fn uninstall_module() -> DstResult<install_mgr::InstallStatus> {
+    install_mgr::uninstall_module()
 }
 
 // ============ 校验 ============
@@ -244,22 +306,87 @@ pub struct AiKeyStatus {
     pub masked: String,
 }
 
-/// 检测 AI 是否就绪（配置 + key 都存在）。
+/// 检测 AI 是否就绪（任一 Profile 有 key）。
 #[tauri::command]
 pub fn ai_ready() -> bool {
     ai_config::is_configured()
 }
 
+#[tauri::command]
+pub fn list_ai_profiles() -> DstResult<Vec<AiProfile>> {
+    ai_config::list_profiles()
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct AiProfilesMeta {
+    pub profiles: Vec<AiProfile>,
+    pub default_profile_id: Option<String>,
+}
+
+#[tauri::command]
+pub fn get_ai_profiles_meta() -> DstResult<AiProfilesMeta> {
+    let store = ai_config::load_profiles_store()?;
+    Ok(AiProfilesMeta {
+        profiles: store.profiles,
+        default_profile_id: store.default_profile_id,
+    })
+}
+
+#[derive(Debug, Clone, serde::Deserialize)]
+pub struct SaveAiProfileInput {
+    pub profile: AiProfile,
+    pub key: Option<String>,
+}
+
+#[tauri::command]
+pub fn save_ai_profile(input: SaveAiProfileInput) -> DstResult<AiProfile> {
+    ai_config::save_profile(input.profile, input.key.as_deref())
+}
+
+#[tauri::command]
+pub fn delete_ai_profile(id: String) -> DstResult<()> {
+    ai_config::delete_profile(&id)
+}
+
+#[tauri::command]
+pub fn set_default_ai_profile(id: String) -> DstResult<()> {
+    let mut store = ai_config::load_profiles_store()?;
+    if !store.profiles.iter().any(|p| p.id == id) {
+        return Err(DstError::Other(format!("Profile 不存在：{id}")));
+    }
+    store.default_profile_id = Some(id);
+    ai_config::save_profiles_store(&store)
+}
+
+#[tauri::command]
+pub async fn test_ai_profile(id: String) -> DstResult<String> {
+    let config = ai_config::load_config_for_profile(Some(&id))?;
+    let api_key = ai_config::load_key_for_profile(&id)?;
+    let messages = vec![ChatMessage {
+        role: "user".into(),
+        content: "回复 OK".into(),
+    }];
+    let events = ai_client::chat_stream(&config, &api_key, messages).await?;
+    let full: String = events
+        .iter()
+        .filter(|e| e.kind == "delta")
+        .map(|e| e.content.as_str())
+        .collect();
+    if full.trim().is_empty() {
+        return Err(DstError::Other("模型返回为空".into()));
+    }
+    Ok(full.chars().take(120).collect())
+}
+
 // ============ AI 对话 ============
 
-/// 发起一次 AI 对话（非流式，一次返回全部 delta）。
-/// 前端传历史消息，后端注入 system prompt 后请求 AI。
-#[tauri::command]
-pub async fn ai_chat(messages: Vec<ChatMessage>) -> DstResult<String> {
-    let config = ai_config::load_config()?;
-    let api_key = ai_config::load_key()?;
+async fn ai_chat_inner(messages: Vec<ChatMessage>, profile_id: Option<String>) -> DstResult<String> {
+    let config = ai_config::load_config_for_profile(profile_id.as_deref())?;
+    let id = profile_id
+        .or_else(|| ai_config::load_profiles_store().ok()?.default_profile_id)
+        .ok_or_else(|| DstError::Other("未选择 AI Profile".into()))?;
+    let api_key = ai_config::load_key_for_profile(&id)?;
     let events = ai_client::chat_stream(&config, &api_key, messages).await?;
-    // 拼接所有 delta
     let full: String = events
         .iter()
         .filter(|e| e.kind == "delta")
@@ -268,13 +395,19 @@ pub async fn ai_chat(messages: Vec<ChatMessage>) -> DstResult<String> {
     Ok(full)
 }
 
+/// 发起一次 AI 对话（非流式，一次返回全部 delta）。
+#[tauri::command]
+pub async fn ai_chat(messages: Vec<ChatMessage>, profile_id: Option<String>) -> DstResult<String> {
+    ai_chat_inner(messages, profile_id).await
+}
+
 /// AI 对话并自动校验生成的代码。
-/// 返回 AI 回复 + 提取的代码块 + 每个代码块的安全/语法校验结果。
 #[tauri::command]
 pub async fn ai_chat_with_validation(
     messages: Vec<ChatMessage>,
+    profile_id: Option<String>,
 ) -> DstResult<AiChatResult> {
-    let reply = ai_chat(messages).await?;
+    let reply = ai_chat_inner(messages, profile_id).await?;
     let code_blocks = ai_config::extract_code_blocks(&reply);
 
     let mut validated = vec![];
@@ -356,6 +489,7 @@ pub fn export_workspace(target_dir: String) -> DstResult<String> {
 #[tauri::command]
 pub fn import_workspace(source_dir: String) -> DstResult<Vec<String>> {
     let files = export::import_from(&source_dir)?;
+    sync::invalidate_category_cache();
     logging::log(logging::LogLevel::Info, "import", &format!("导入 {} 项", files.len()));
     Ok(files)
 }

@@ -1,4 +1,5 @@
 use crate::error::{DstError, DstResult};
+use crate::process_util::output_hidden;
 use std::path::Path;
 use std::process::Command;
 
@@ -97,11 +98,9 @@ pub struct CommitInfo {
 }
 
 fn run_git(root: &Path, args: &[&str]) -> DstResult<String> {
-    let output = Command::new("git")
-        .args(args)
-        .current_dir(root)
-        .output()
-        .map_err(|e| DstError::Other(format!("启动 git 失败：{e}")))?;
+    let mut cmd = Command::new("git");
+    cmd.args(args).current_dir(root);
+    let output = output_hidden(cmd).map_err(|e| DstError::Other(format!("启动 git 失败：{e}")))?;
     if !output.status.success() {
         let err = String::from_utf8_lossy(&output.stderr);
         return Err(DstError::Other(format!(

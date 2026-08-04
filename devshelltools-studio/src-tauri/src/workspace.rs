@@ -1,12 +1,13 @@
 use crate::error::{DstError, DstResult};
 use std::path::PathBuf;
 
-/// 工作区固定路径：Documents\DevShellTools
+/// 工作区固定路径：Documents\WindowsPowerShell\Modules\DevShellTools
+/// 与 install.ps1 安装到 PS5.1 的默认模块目录一致，便携工具直接管理系统安装路径。
 pub fn workspace_root() -> PathBuf {
     let docs = std::env::var("USERPROFILE")
         .map(|p| PathBuf::from(p).join("Documents"))
         .unwrap_or_else(|_| PathBuf::from("."));
-    docs.join("DevShellTools")
+    docs.join("WindowsPowerShell").join("Modules").join("DevShellTools")
 }
 
 /// .studio 子目录（日志、运行时元数据）
@@ -113,13 +114,21 @@ pub fn list_public_files() -> DstResult<Vec<String>> {
     Ok(names)
 }
 
+/// 去掉 UTF-8 BOM（WriteAllText 写入后 Rust 会读成 U+FEFF 前缀）。
+fn strip_utf8_bom(mut s: String) -> String {
+    if s.starts_with('\u{FEFF}') {
+        s = s.strip_prefix('\u{FEFF}').unwrap_or(&s).to_string();
+    }
+    s
+}
+
 /// 读取工作区某文件全文。
 pub fn read_file(rel: &str) -> DstResult<String> {
     let path = workspace_root().join(rel);
     if !path.exists() {
         return Err(DstError::FileNotFound(rel.to_string()));
     }
-    Ok(std::fs::read_to_string(path)?)
+    Ok(strip_utf8_bom(std::fs::read_to_string(path)?))
 }
 
 /// 写工作区某文件全文（不 git 提交，调用方负责快照）。
@@ -203,6 +212,14 @@ mod tests {
     #[test]
     fn root_path_is_documents_subdir() {
         let root = workspace_root();
-        assert!(root.to_string_lossy().ends_with("DevShellTools"));
+        let s = root.to_string_lossy();
+        assert!(
+            s.ends_with("DevShellTools"),
+            "工作区根目录应以 DevShellTools 结尾：{s}"
+        );
+        assert!(
+            s.contains("WindowsPowerShell"),
+            "工作区应在 PS5.1 模块目录下：{s}"
+        );
     }
 }

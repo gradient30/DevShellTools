@@ -10,7 +10,7 @@ pub enum AiProtocol {
     Anthropic,
 }
 
-/// AI 配置（不含 api_key，key 单独存）
+/// AI 配置（不含 api_key，key 单独存）— 兼容旧 API，等同单个 Profile 的字段。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AiConfig {
     pub protocol: AiProtocol,
@@ -22,6 +22,56 @@ pub struct AiConfig {
     /// 最大输出 token，默认 2048
     #[serde(default = "default_max_tokens")]
     pub max_tokens: u32,
+}
+
+/// 多 Profile 存储项。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AiProfile {
+    pub id: String,
+    pub name: String,
+    pub protocol: AiProtocol,
+    pub base_url: String,
+    pub model: String,
+    #[serde(default = "default_temp")]
+    pub temperature: f64,
+    #[serde(default = "default_max_tokens")]
+    pub max_tokens: u32,
+    #[serde(default)]
+    pub key_configured: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct AiProfilesStore {
+    #[serde(default)]
+    pub profiles: Vec<AiProfile>,
+    pub default_profile_id: Option<String>,
+}
+
+impl From<&AiProfile> for AiConfig {
+    fn from(p: &AiProfile) -> Self {
+        Self {
+            protocol: p.protocol,
+            base_url: p.base_url.clone(),
+            model: p.model.clone(),
+            temperature: p.temperature,
+            max_tokens: p.max_tokens,
+        }
+    }
+}
+
+impl AiProfile {
+    pub fn from_config(id: String, name: String, cfg: &AiConfig) -> Self {
+        Self {
+            id,
+            name,
+            protocol: cfg.protocol,
+            base_url: cfg.base_url.clone(),
+            model: cfg.model.clone(),
+            temperature: cfg.temperature,
+            max_tokens: cfg.max_tokens,
+            key_configured: false,
+        }
+    }
 }
 
 fn default_temp() -> f64 {
@@ -43,41 +93,149 @@ impl Default for AiConfig {
     }
 }
 
-/// 配置文件路径：工作区 .studio/ai_config.json
+/// 多 Profile 配置文件：.studio/ai_profiles.json
+fn profiles_file() -> std::path::PathBuf {
+    workspace::studio_dir().join("ai_profiles.json")
+}
+
+fn keys_dir() -> std::path::PathBuf {
+    workspace::studio_dir().join("ai_keys")
+}
+
+/// 配置文件路径：工作区 .studio/ai_config.json（旧版，迁移后保留只读）
 fn config_file() -> std::path::PathBuf {
     workspace::studio_dir().join("ai_config.json")
 }
 
-/// 凭证文件路径：工作区 .studio/ai_key.txt（明文，便携优先；M3 不引入 keyring）
+/// 凭证文件路径：工作区 .studio/ai_key.txt（旧版）
 fn key_file() -> std::path::PathBuf {
     workspace::studio_dir().join("ai_key.txt")
 }
 
-/// 读取 AI 配置。不存在则返回默认。
-pub fn load_config() -> DstResult<AiConfig> {
-    let path = config_file();
-    if !path.exists() {
-        return Ok(AiConfig::default());
-    }
-    let raw = std::fs::read_to_string(&path)?;
-    let cfg: AiConfig = serde_json::from_str(&raw)?;
-    Ok(cfg)
+fn key_file_for(id: &str) -> std::path::PathBuf {
+    keys_dir().join(format!("{id}.txt"))
 }
 
-/// 保存 AI 配置。
-pub fn save_config(cfg: &AiConfig) -> DstResult<()> {
-    let path = config_file();
-    if let Some(parent) = path.parent() {
+fn migrate_legacy_if_needed() -> DstResult<()> {
+    if profiles_file().exists() {
+        return Ok(());
+    }
+    let mut store = AiProfilesStore::default();
+    if config_file().exists() {
+        if let Ok(raw) = std::fs::read_to_string(config_file()) {
+            if let Ok(cfg) = serde_json::from_str::<AiConfig>(&raw) {
+                let id = uuid_simple();
+                let mut profile = AiProfile::from_config(id.clone(), "默认配置".into(), &cfg);
+                if key_file().exists() {
+                    if let Ok(key) = std::fs::read_to_string(key_file()) {
+                        save_key_for_profile(&id, key.trim())?;
+                        profile.key_configured = true;
+                    }
+                }
+                store.profiles.push(profile);
+                store.default_profile_id = Some(id);
+            }
+        }
+    }
+    if store.profiles.is_empty() {
+        let id = uuid_simple();
+        let profile = AiProfile::from_config(id.clone(), "默认配置".into(), &AiConfig::default());
+        store.profiles.push(profile);
+        store.default_profile_id = Some(id);
+    }
+    save_profiles_store(&store)
+}
+
+fn uuid_simple() -> String {
+    format!(
+        "{:x}{:x}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    )
+}
+
+pub fn load_profiles_store() -> DstResult<AiProfilesStore> {
+    migrate_legacy_if_needed()?;
+    let path = profiles_file();
+    if !path.exists() {
+        return Ok(AiProfilesStore::default());
+    }
+    let raw = std::fs::read_to_string(&path)?;
+    let mut store: AiProfilesStore = serde_json::from_str(&raw)?;
+    for p in &mut store.profiles {
+        p.key_configured = key_file_for(&p.id).exists();
+    }
+    Ok(store)
+}
+
+pub fn save_profiles_store(store: &AiProfilesStore) -> DstResult<()> {
+    if let Some(parent) = profiles_file().parent() {
         std::fs::create_dir_all(parent)?;
     }
-    let json = serde_json::to_string_pretty(cfg)?;
-    std::fs::write(&path, json)?;
+    std::fs::write(profiles_file(), serde_json::to_string_pretty(store)?)?;
     Ok(())
 }
 
-/// 读取 API key。
-pub fn load_key() -> DstResult<String> {
-    let path = key_file();
+pub fn list_profiles() -> DstResult<Vec<AiProfile>> {
+    Ok(load_profiles_store()?.profiles)
+}
+
+pub fn get_profile(id: &str) -> DstResult<AiProfile> {
+    let store = load_profiles_store()?;
+    store
+        .profiles
+        .iter()
+        .find(|p| p.id == id)
+        .cloned()
+        .ok_or_else(|| DstError::Other(format!("Profile 不存在：{id}")))
+}
+
+pub fn save_profile(profile: AiProfile, key: Option<&str>) -> DstResult<AiProfile> {
+    let mut store = load_profiles_store()?;
+    if let Some(k) = key {
+        if !k.trim().is_empty() {
+            save_key_for_profile(&profile.id, k.trim())?;
+        }
+    }
+    let mut p = profile;
+    p.key_configured = key_file_for(&p.id).exists();
+    if let Some(existing) = store.profiles.iter_mut().find(|x| x.id == p.id) {
+        *existing = p.clone();
+    } else {
+        store.profiles.push(p.clone());
+        if store.default_profile_id.is_none() {
+            store.default_profile_id = Some(p.id.clone());
+        }
+    }
+    save_profiles_store(&store)?;
+    Ok(p)
+}
+
+pub fn delete_profile(id: &str) -> DstResult<()> {
+    let mut store = load_profiles_store()?;
+    store.profiles.retain(|p| p.id != id);
+    let _ = std::fs::remove_file(key_file_for(id));
+    if store.default_profile_id.as_deref() == Some(id) {
+        store.default_profile_id = store.profiles.first().map(|p| p.id.clone());
+    }
+    save_profiles_store(&store)
+}
+
+pub fn load_config_for_profile(id: Option<&str>) -> DstResult<AiConfig> {
+    let store = load_profiles_store()?;
+    let pid = id
+        .map(|s| s.to_string())
+        .or_else(|| store.default_profile_id.clone())
+        .ok_or_else(|| DstError::Other("未配置 AI Profile".into()))?;
+    let profile = get_profile(&pid)?;
+    Ok(AiConfig::from(&profile))
+}
+
+pub fn load_key_for_profile(id: &str) -> DstResult<String> {
+    let path = key_file_for(id);
     if !path.exists() {
         return Err(DstError::Other("未配置 API Key".into()));
     }
@@ -88,19 +246,69 @@ pub fn load_key() -> DstResult<String> {
     Ok(key)
 }
 
-/// 保存 API key。
-pub fn save_key(key: &str) -> DstResult<()> {
-    let path = key_file();
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
-    std::fs::write(&path, key.trim())?;
+pub fn save_key_for_profile(id: &str, key: &str) -> DstResult<()> {
+    std::fs::create_dir_all(keys_dir())?;
+    std::fs::write(key_file_for(id), key.trim())?;
     Ok(())
 }
 
-/// 是否已配置（配置 + key 都存在）。
+/// 读取 AI 配置（默认 Profile）。
+pub fn load_config() -> DstResult<AiConfig> {
+    load_config_for_profile(None)
+}
+
+/// 保存 AI 配置到默认 Profile。
+pub fn save_config(cfg: &AiConfig) -> DstResult<()> {
+    let mut store = load_profiles_store()?;
+    let id = store
+        .default_profile_id
+        .clone()
+        .unwrap_or_else(uuid_simple);
+    let name = store
+        .profiles
+        .iter()
+        .find(|p| p.id == id)
+        .map(|p| p.name.clone())
+        .unwrap_or_else(|| "默认配置".into());
+    let mut profile = AiProfile::from_config(id.clone(), name, cfg);
+    profile.key_configured = key_file_for(&id).exists();
+    if let Some(existing) = store.profiles.iter_mut().find(|p| p.id == id) {
+        profile.key_configured = existing.key_configured || profile.key_configured;
+        *existing = profile;
+    } else {
+        store.profiles.push(profile);
+    }
+    store.default_profile_id = Some(id);
+    save_profiles_store(&store)
+}
+
+/// 读取 API key（默认 Profile）。
+pub fn load_key() -> DstResult<String> {
+    let store = load_profiles_store()?;
+    let id = store
+        .default_profile_id
+        .ok_or_else(|| DstError::Other("未配置 AI Profile".into()))?;
+    load_key_for_profile(&id)
+}
+
+/// 保存 API key（默认 Profile）。
+pub fn save_key(key: &str) -> DstResult<()> {
+    let store = load_profiles_store()?;
+    let id = store
+        .default_profile_id
+        .ok_or_else(|| DstError::Other("未配置 AI Profile".into()))?;
+    save_key_for_profile(&id, key)
+}
+
+/// 是否已配置（任一 Profile 有 key）。
 pub fn is_configured() -> bool {
-    load_config().is_ok() && load_key().is_ok()
+    load_profiles_store()
+        .map(|s| {
+            s.profiles
+                .iter()
+                .any(|p| key_file_for(&p.id).exists())
+        })
+        .unwrap_or(false)
 }
 
 /// 聊天消息

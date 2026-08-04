@@ -8,7 +8,7 @@
 
 1. **DevShellTools（仓库根目录）**：一个 Windows PowerShell 模块（当前版本 1.0.4），提供开发与运维快捷命令（文件浏览、Git、网络诊断、代理管理、PowerShell 会话管理等）。目标运行时同时兼容 Windows PowerShell 5.1 与 PowerShell 7。命令行入口是 `dsh`（交互式分类菜单与帮助）。
 
-2. **devshelltools-studio/（子目录）**：一个 Tauri 2 桌面应用（当前版本 1.0.5），是上述模块的可视化管理工具。它管理固定路径 `Documents\DevShellTools` 下的"工作区"（即模块源码的一份副本），提供分类/函数的编辑、安全检查、一致性校验、PowerShell 语法校验，并在每次写入后自动做 git 快照。
+2. **devshelltools-studio/（子目录）**：一个 Tauri 2 桌面应用（当前版本 1.0.5），是上述模块的可视化管理工具。它直接管理 `%USERPROFILE%\Documents\WindowsPowerShell\Modules\DevShellTools`（与 `install.ps1` 安装到 PS 5.1 的默认路径一致），提供分类/函数的编辑、AI 辅助生成、安全检查、一致性校验、PowerShell 语法校验、迁移/导出导入，并在每次写入后自动做 git 快照。元数据在 `.studio/` 子目录。
 
 ## 目录结构
 
@@ -30,8 +30,9 @@ DevShellTools/
       ├─ Cargo.toml          # tauri =2.8.5、tauri-plugin-fs、serde、thiserror、anyhow、chrono、log
       ├─ tauri.conf.json     # 窗口配置；bundle.active = false（默认不打包安装程序）
       ├─ src/                # lib.rs（命令注册）、commands、workspace、sync、ps_parser、
-      │                      # consistency、safety、git、template、error、main
-      └─ tests/              # m1_acceptance.rs、m2_acceptance.rs（端到端验收测试）
+      │                      # consistency、safety、git、template、ai_*、migrate、export、
+      │                      # logging、webview2、error、main
+      └─ tests/              # common/（USERPROFILE 隔离锁）、m1~m4_acceptance.rs
 ```
 
 ## 构建与测试命令
@@ -56,9 +57,10 @@ cd src-tauri
 cargo test                  # 全部 Rust 测试：单元测试（src/ 内 #[cfg(test)]）+ tests/ 验收测试
 cargo test --test m1_acceptance   # 单独跑 M1 验收
 cargo test --test m2_acceptance   # 单独跑 M2 验收
+cargo test --test m4_acceptance   # 单独跑 M4 验收
 ```
 
-测试注意事项：验收测试通过临时修改 `USERPROFILE` 环境变量把"工作区"隔离到临时目录，并依赖系统 `git` 与 `powershell.exe`，因此测试只能在 Windows 上完整运行，且会启动真实子进程。模块目前没有 Pester 测试，验证靠手动导入模块并执行 `dsh` / 各快捷命令。
+测试注意事项：验收测试通过 `tests/common/mod.rs` 的 `IsolatedProfile` 临时修改 `USERPROFILE` 把"工作区"隔离到临时目录（串行锁避免并行污染），并依赖系统 `git` 与 `powershell.exe`，因此测试只能在 Windows 上完整运行，且会启动真实子进程。模块目前没有 Pester 测试，验证靠手动导入模块并执行 `dsh` / 各快捷命令。
 
 ## 代码组织与约定
 
@@ -73,7 +75,8 @@ cargo test --test m2_acceptance   # 单独跑 M2 验收
 ### Studio 后端（src-tauri/src/）
 
 - `commands.rs`：所有 `#[tauri::command]` 入口，注册于 `lib.rs`。
-- `workspace.rs`：工作区固定为 `%USERPROFILE%\Documents\DevShellTools`（依赖 `USERPROFILE` 环境变量，测试靠覆盖它隔离）；元数据在 `.studio/workspace.json`。
+- `workspace.rs`：工作区固定为 `%USERPROFILE%\Documents\WindowsPowerShell\Modules\DevShellTools`（与 `install.ps1` PS5.1 目标一致；依赖 `USERPROFILE`，测试靠 `IsolatedProfile` 隔离）；元数据在 `.studio/workspace.json`。
+- `migrate.rs`：从旧路径（`Documents\DevShellTools` 旧 Studio 沙箱、PS7 模块目录等，排除当前工作区）合并 `Public/*.ps1`。
 - `ps_parser.rs`：不自己解析 PowerShell，而是把代码写入带 UTF-8 BOM 的临时文件，调用 `powershell.exe` 的 AST 解析并回传 JSON。**因此 Studio 及其测试仅能在 Windows 上运行**。
 - `git.rs`：调用系统 `git` 命令行（非 libgit2），每次写入操作自动 `add -A` + commit（快照）。
 - `sync.rs`：扫描分类后重新生成 `.psd1`/`.psm1` 的导出列表等"公共部分"，原子写入（全部成功才落盘）。
