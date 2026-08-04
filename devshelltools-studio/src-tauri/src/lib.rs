@@ -1,5 +1,6 @@
 pub mod ai_client;
 pub mod ai_config;
+pub mod ai_presets;
 pub mod commands;
 pub mod consistency;
 pub mod error;
@@ -69,6 +70,10 @@ pub fn run() {
             commands::delete_ai_profile,
             commands::set_default_ai_profile,
             commands::test_ai_profile,
+            commands::list_ai_presets,
+            commands::suggest_ai_endpoint,
+            commands::fetch_ai_models,
+            commands::fetch_ai_models_preview,
             commands::ai_chat,
             commands::ai_chat_with_validation,
             commands::check_migration,

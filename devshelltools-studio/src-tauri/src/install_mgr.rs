@@ -1,6 +1,8 @@
 use crate::error::{DstError, DstResult};
+use crate::process_util::{output_hidden, ps_base_args};
 use crate::workspace;
 use std::path::{Path, PathBuf};
+use std::process::Command;
 
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct InstallStatus {
@@ -10,6 +12,15 @@ pub struct InstallStatus {
     pub profile_configured: bool,
     /// profile 已配置且 PS7 副本存在时视为已安装
     pub installed: bool,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct InstallResult {
+    pub status: InstallStatus,
+    /// 给用户的即时说明（含是否需新开 PowerShell）
+    pub message: String,
+    /// 隐藏子进程中验证 Import-Module / dsh 是否可用
+    pub verified: bool,
 }
 
 fn documents_dir() -> PathBuf {
@@ -127,8 +138,54 @@ fn remove_profile_import(path: &Path) -> DstResult<()> {
     Ok(())
 }
 
+/// 在独立进程中验证模块是否可加载（不依赖当前终端会话）。
+fn verify_module_load() -> bool {
+    let script = r#"
+$ErrorActionPreference = 'Stop'
+Import-Module DevShellTools -Force -ErrorAction Stop
+if (-not (Get-Command dsh -ErrorAction SilentlyContinue)) { throw 'dsh missing' }
+'OK'
+"#;
+    let exe = if Command::new("pwsh").arg("--version").output().is_ok() {
+        "pwsh"
+    } else {
+        "powershell"
+    };
+    let mut cmd = Command::new(exe);
+    for arg in ps_base_args(exe) {
+        cmd.arg(arg);
+    }
+    cmd.args(["-Command", script]);
+    output_hidden(cmd)
+        .map(|o| o.status.success() && String::from_utf8_lossy(&o.stdout).contains("OK"))
+        .unwrap_or(false)
+}
+
+fn install_result(status: InstallStatus, action: &str, verified: bool) -> InstallResult {
+    let message = if action == "install" {
+        if status.installed && verified {
+            "安装完成：Profile 与 PS7 模块已更新，验证通过。请新开 PowerShell 窗口运行 dsh。".into()
+        } else if status.installed {
+            "安装完成：Profile 与 PS7 模块已更新。请新开 PowerShell 窗口运行 dsh（自动验证未通过，可手动 Import-Module DevShellTools）。".into()
+        } else {
+            "安装未完成：请检查 Profile 权限或 PS7 模块目录。".into()
+        }
+    } else if status.installed {
+        "卸载未完成：仍有残留配置。".into()
+    } else if verified {
+        "卸载完成：已移除 Profile 导入与 PS7 副本。已打开的 PowerShell 窗口需重启后生效。".into()
+    } else {
+        "卸载完成：已移除 Profile 导入与 PS7 副本。请新开 PowerShell 窗口确认 dsh 不可用。".into()
+    };
+    InstallResult {
+        status,
+        message,
+        verified,
+    }
+}
+
 /// 软安装：同步 PS7 模块目录 + 写入 Profile。
-pub fn install_module() -> DstResult<InstallStatus> {
+pub fn install_module() -> DstResult<InstallResult> {
     if !workspace::is_initialized() {
         return Err(DstError::Other("请先初始化工作区".into()));
     }
@@ -142,11 +199,13 @@ pub fn install_module() -> DstResult<InstallStatus> {
     for p in profile_paths() {
         ensure_profile_import(&p)?;
     }
-    Ok(install_status())
+    let status = install_status();
+    let verified = verify_module_load();
+    Ok(install_result(status, "install", verified))
 }
 
 /// 软卸载：仅清理 Profile + 删除 PS7 副本，保留 PS5.1 工作区。
-pub fn uninstall_module() -> DstResult<InstallStatus> {
+pub fn uninstall_module() -> DstResult<InstallResult> {
     for p in profile_paths() {
         remove_profile_import(&p)?;
     }
@@ -154,5 +213,11 @@ pub fn uninstall_module() -> DstResult<InstallStatus> {
     if ps7.exists() {
         std::fs::remove_dir_all(&ps7).ok();
     }
-    Ok(install_status())
+    let status = install_status();
+    let verified = verify_module_uninstalled(&status);
+    Ok(install_result(status, "uninstall", verified))
+}
+
+fn verify_module_uninstalled(status: &InstallStatus) -> bool {
+    !status.profile_configured && !status.ps7_module_present
 }

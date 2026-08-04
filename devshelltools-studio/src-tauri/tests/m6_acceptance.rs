@@ -46,11 +46,11 @@ mod tests {
         assert!(before.ps51_module_present);
 
         let after_install = install_mgr::install_module().expect("install");
-        assert!(after_install.profile_configured);
-        assert!(after_install.ps7_module_present);
+        assert!(after_install.status.profile_configured);
+        assert!(after_install.status.ps7_module_present);
 
         let after_uninstall = install_mgr::uninstall_module().expect("uninstall");
-        assert!(!after_uninstall.installed);
+        assert!(!after_uninstall.status.installed);
         assert!(workspace::is_initialized(), "软卸载后工作区应保留");
     }
 }

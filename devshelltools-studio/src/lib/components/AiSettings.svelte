@@ -1,8 +1,9 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { api, type AiProfile } from "../api";
+  import { api, type AiPreset, type AiProfile, type AiProtocol } from "../api";
 
   let profiles = $state<AiProfile[]>([]);
+  let presets = $state<AiPreset[]>([]);
   let defaultId = $state<string>("");
   let loading = $state(true);
   let errMsg = $state<string | null>(null);
@@ -10,18 +11,30 @@
 
   let showDialog = $state(false);
   let editing = $state<AiProfile | null>(null);
+  let selectedPresetId = $state("custom");
   let newKey = $state("");
   let testing = $state(false);
   let testOk = $state(false);
   let testMsg = $state("");
+  let endpointNote = $state("");
+
+  let fetchingModels = $state(false);
+  let modelOptions = $state<string[]>([]);
+  let showModelPicker = $state(false);
+  let modelSearch = $state("");
+
+  let filteredModels = $derived(
+    modelOptions.filter((m) => m.toLowerCase().includes(modelSearch.trim().toLowerCase()))
+  );
 
   async function load() {
     loading = true;
     errMsg = null;
     try {
-      const meta = await api.getAiProfilesMeta();
+      const [meta, presetList] = await Promise.all([api.getAiProfilesMeta(), api.listAiPresets()]);
       profiles = meta.profiles;
       defaultId = meta.default_profile_id ?? profiles[0]?.id ?? "";
+      presets = presetList;
     } catch (e) {
       errMsg = String(e);
     } finally {
@@ -31,29 +44,106 @@
 
   onMount(load);
 
+  function matchPresetId(p: AiProfile): string {
+    const hit = presets.find((x) => x.base_url === p.base_url && x.protocol === p.protocol);
+    return hit?.id ?? "custom";
+  }
+
+  function applyPreset(presetId: string) {
+    if (!editing || presetId === "custom") {
+      selectedPresetId = presetId;
+      return;
+    }
+    const p = presets.find((x) => x.id === presetId);
+    if (!p) return;
+    selectedPresetId = presetId;
+    editing.protocol = p.protocol;
+    editing.base_url = p.base_url;
+    editing.model = p.default_model;
+    endpointNote = `已应用预设「${p.name}」`;
+    testOk = false;
+    testMsg = "";
+  }
+
+  async function onProtocolChange(next: AiProtocol) {
+    if (!editing) return;
+    const suggestion = await api.suggestAiEndpoint(next, editing.base_url);
+    editing.protocol = suggestion.protocol;
+    editing.base_url = suggestion.base_url;
+    editing.model = suggestion.default_model;
+    endpointNote = suggestion.note;
+    selectedPresetId = matchPresetId(editing);
+    testOk = false;
+    testMsg = "";
+  }
+
   function openAdd() {
+    const p = presets[0];
     editing = {
       id: `p-${Date.now()}`,
       name: "",
-      protocol: "openai",
-      base_url: "https://api.openai.com/v1",
-      model: "gpt-4o-mini",
+      protocol: p?.protocol ?? "openai",
+      base_url: p?.base_url ?? "https://api.openai.com/v1",
+      model: p?.default_model ?? "gpt-4o-mini",
       temperature: 0.7,
       max_tokens: 2048,
       key_configured: false
     };
+    selectedPresetId = p?.id ?? "custom";
     newKey = "";
     testOk = false;
     testMsg = "";
+    endpointNote = "";
+    modelOptions = [];
+    showModelPicker = false;
     showDialog = true;
   }
 
   function openEdit(p: AiProfile) {
     editing = { ...p };
+    selectedPresetId = matchPresetId(p);
     newKey = "";
     testOk = false;
     testMsg = "";
+    endpointNote = "";
+    modelOptions = [];
+    showModelPicker = false;
     showDialog = true;
+  }
+
+  async function fetchModels() {
+    if (!editing) return;
+    fetchingModels = true;
+    errMsg = null;
+    try {
+      if (newKey.trim()) {
+        modelOptions = await api.fetchAiModelsPreview(
+          editing.protocol,
+          editing.base_url,
+          newKey.trim()
+        );
+      } else if (editing.key_configured) {
+        modelOptions = await api.fetchAiModels(editing.id);
+      } else {
+        errMsg = "请先填写 API Key";
+        return;
+      }
+      showModelPicker = true;
+      modelSearch = "";
+      if (modelOptions.length > 0 && !modelOptions.includes(editing.model)) {
+        editing.model = modelOptions[0];
+      }
+    } catch (e) {
+      errMsg = String(e);
+    } finally {
+      fetchingModels = false;
+    }
+  }
+
+  function pickModel(id: string) {
+    if (editing) editing.model = id;
+    showModelPicker = false;
+    testOk = false;
   }
 
   async function testConnection() {
@@ -174,8 +264,23 @@
           <input bind:value={editing.name} class="mt-1 w-full px-2 py-1.5 text-sm bg-slate-800 border border-slate-700 rounded" />
         </label>
         <label class="block">
+          <span class="text-xs text-slate-400">提供商预设</span>
+          <select
+            class="mt-1 w-full px-2 py-1.5 text-sm bg-slate-800 border border-slate-700 rounded"
+            value={selectedPresetId}
+            onchange={(e) => applyPreset((e.currentTarget as HTMLSelectElement).value)}>
+            <option value="custom">自定义</option>
+            {#each presets as p (p.id)}
+              <option value={p.id}>{p.name}</option>
+            {/each}
+          </select>
+        </label>
+        <label class="block">
           <span class="text-xs text-slate-400">协议</span>
-          <select bind:value={editing.protocol} class="mt-1 w-full px-2 py-1.5 text-sm bg-slate-800 border border-slate-700 rounded">
+          <select
+            class="mt-1 w-full px-2 py-1.5 text-sm bg-slate-800 border border-slate-700 rounded"
+            value={editing.protocol}
+            onchange={(e) => onProtocolChange((e.currentTarget as HTMLSelectElement).value as AiProtocol)}>
             <option value="openai">OpenAI 兼容</option>
             <option value="anthropic">Anthropic</option>
           </select>
@@ -183,11 +288,43 @@
         <label class="block">
           <span class="text-xs text-slate-400">Base URL</span>
           <input bind:value={editing.base_url} class="mt-1 w-full px-2 py-1.5 text-sm bg-slate-800 border border-slate-700 rounded font-mono" />
+          {#if endpointNote}
+            <p class="text-xs text-amber-300/90 mt-1">{endpointNote}</p>
+          {/if}
         </label>
-        <label class="block">
-          <span class="text-xs text-slate-400">模型</span>
+        <div class="block">
+          <div class="flex items-center justify-between">
+            <span class="text-xs text-slate-400">模型</span>
+            <button
+              type="button"
+              class="text-xs text-cyan-400 hover:text-cyan-200 disabled:opacity-50"
+              onclick={fetchModels}
+              disabled={fetchingModels || (!editing.key_configured && !newKey.trim())}>
+              {fetchingModels ? "拉取中…" : "拉取模型"}
+            </button>
+          </div>
           <input bind:value={editing.model} class="mt-1 w-full px-2 py-1.5 text-sm bg-slate-800 border border-slate-700 rounded font-mono" />
-        </label>
+          {#if showModelPicker && modelOptions.length > 0}
+            <div class="mt-2 border border-slate-700 rounded bg-slate-950/80 p-2">
+              <input
+                bind:value={modelSearch}
+                placeholder="搜索模型…"
+                class="w-full px-2 py-1 text-xs bg-slate-900 border border-slate-700 rounded mb-2" />
+              <ul class="max-h-40 overflow-y-auto text-xs space-y-0.5">
+                {#each filteredModels as m (m)}
+                  <li>
+                    <button type="button" class="w-full text-left px-2 py-1 rounded hover:bg-slate-800 font-mono text-slate-200" onclick={() => pickModel(m)}>
+                      {m}
+                    </button>
+                  </li>
+                {/each}
+                {#if filteredModels.length === 0}
+                  <li class="text-slate-500 px-2 py-1">无匹配模型</li>
+                {/if}
+              </ul>
+            </div>
+          {/if}
+        </div>
         <label class="block">
           <span class="text-xs text-slate-400">API Key {editing.key_configured ? "(已配置，留空不修改)" : ""}</span>
           <input type="password" bind:value={newKey} class="mt-1 w-full px-2 py-1.5 text-sm bg-slate-800 border border-slate-700 rounded font-mono" />

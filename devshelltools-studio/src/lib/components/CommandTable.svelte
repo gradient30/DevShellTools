@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { PsFunction } from "../api";
   import { api } from "../api";
+  import { showToast } from "../stores/toast";
 
   let {
     fileName,
@@ -19,7 +20,6 @@
   let draftSynopsis = $state("");
   let draftExample = $state("");
   let busy = $state(false);
-  let testResult = $state<{ name: string; ok: boolean; msg: string } | null>(null);
   let errMsg = $state<string | null>(null);
 
   function startAdd() {
@@ -28,7 +28,6 @@
     draftSynopsis = "";
     draftExample = "";
     errMsg = null;
-    testResult = null;
   }
 
   function startEdit(f: PsFunction) {
@@ -37,7 +36,6 @@
     draftSynopsis = f.synopsis;
     draftExample = f.first_example || f.name;
     errMsg = null;
-    testResult = null;
   }
 
   function cancelEdit() {
@@ -57,12 +55,13 @@
         fileName,
         draftName.trim(),
         draftSynopsis.trim(),
-        (draftExample.trim() || draftName.trim()),
+        draftExample.trim() || draftName.trim(),
         null,
         `更新命令 ${draftName.trim()}`
       );
       editingName = null;
       await onChanged();
+      showToast(`已保存命令 ${draftName.trim()}`, "success");
     } catch (e) {
       errMsg = String(e);
     } finally {
@@ -77,6 +76,7 @@
     try {
       await api.deleteFunction(fileName, funcName, `删除命令 ${funcName}`);
       await onChanged();
+      showToast(`已删除 ${funcName}`, "info");
     } catch (e) {
       errMsg = String(e);
     } finally {
@@ -86,16 +86,12 @@
 
   async function test(funcName: string) {
     busy = true;
-    testResult = null;
     try {
       const r = await api.testFunction(fileName, funcName);
-      testResult = {
-        name: funcName,
-        ok: r.ok,
-        msg: r.ok ? r.stdout.trim() || "(执行成功，无输出)" : r.stderr
-      };
+      const msg = r.ok ? r.stdout.trim() || "(执行成功，无输出)" : r.stderr;
+      showToast(`${funcName} · ${r.ok ? "通过" : "失败"}\n${msg}`, r.ok ? "success" : "error", 5000);
     } catch (e) {
-      testResult = { name: funcName, ok: false, msg: String(e) };
+      showToast(`${funcName} · 失败\n${String(e)}`, "error", 5000);
     } finally {
       busy = false;
     }
@@ -165,14 +161,4 @@
       {/each}
     </tbody>
   </table>
-
-  {#if testResult}
-    <div
-      class="mt-2 p-2 text-xs rounded border {testResult.ok
-        ? 'bg-green-900/30 border-green-700 text-green-200'
-        : 'bg-red-900/30 border-red-700 text-red-200'}">
-      <div class="font-mono mb-1">{testResult.name} · {testResult.ok ? "通过" : "失败"}</div>
-      <pre class="whitespace-pre-wrap font-mono">{testResult.msg}</pre>
-    </div>
-  {/if}
 </div>

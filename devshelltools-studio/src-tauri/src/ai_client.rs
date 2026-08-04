@@ -256,6 +256,52 @@ async fn chat_anthropic(
     Ok(events)
 }
 
+/// 拉取可用模型列表（OpenAI 兼容走 /models，Anthropic 返回常用目录）。
+pub async fn list_models(config: &AiConfig, api_key: &str) -> DstResult<Vec<String>> {
+    match config.protocol {
+        AiProtocol::Openai => list_openai_models(config, api_key).await,
+        AiProtocol::Anthropic => Ok(crate::ai_presets::anthropic_model_catalog()),
+    }
+}
+
+#[derive(Deserialize)]
+struct OpenaiModelsResponse {
+    data: Vec<OpenaiModelItem>,
+}
+
+#[derive(Deserialize)]
+struct OpenaiModelItem {
+    id: String,
+}
+
+async fn list_openai_models(config: &AiConfig, api_key: &str) -> DstResult<Vec<String>> {
+    let url = format!("{}/models", config.base_url.trim_end_matches('/'));
+    let client = reqwest::Client::new();
+    let resp = client
+        .get(&url)
+        .bearer_auth(api_key)
+        .send()
+        .await
+        .map_err(DstError::Http)?;
+
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let text = resp.text().await.unwrap_or_default();
+        return Err(DstError::Other(format!(
+            "拉取模型失败 {status}：{text}（请确认协议为 OpenAI 兼容且 Base URL 正确，如 DeepSeek 应为 https://api.deepseek.com/v1）"
+        )));
+    }
+
+    let parsed: OpenaiModelsResponse = resp.json().await.map_err(DstError::Http)?;
+    let mut ids: Vec<String> = parsed.data.into_iter().map(|m| m.id).collect();
+    ids.sort();
+    ids.dedup();
+    if ids.is_empty() {
+        return Err(DstError::Other("模型列表为空".into()));
+    }
+    Ok(ids)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

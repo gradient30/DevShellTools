@@ -10,6 +10,7 @@
     init,
     clearMessages
   } from "./lib/stores/workspace";
+  import { showToast } from "./lib/stores/toast";
   import { api, type CategoryInfo, type CommitInfo, type ConsistencyReport, type InstallStatus, type MigrationCheck, type PsFunction, type Webview2Status } from "./lib/api";
   import CategoryList from "./lib/components/CategoryList.svelte";
   import CategoryEditor from "./lib/components/CategoryEditor.svelte";
@@ -17,11 +18,14 @@
   import ChatPanel from "./lib/components/ChatPanel.svelte";
   import AiSettings from "./lib/components/AiSettings.svelte";
   import ToolsPage from "./lib/components/ToolsPage.svelte";
+  import ToastHost from "./lib/components/ToastHost.svelte";
 
   type Tab = "manage" | "chat" | "settings" | "tools";
   let tab = $state<Tab>("manage");
 
   let categories = $state<CategoryInfo[]>([]);
+  let categoriesLoading = $state(false);
+  let categoriesLoaded = $state(false);
   let selectedFileName = $state<string | null>(null);
   let selectedCategory = $derived(categories.find((c) => c.file_name === selectedFileName) ?? null);
   let fileContent = $state("");
@@ -30,6 +34,8 @@
   let showNewDialog = $state(false);
   let logsLoading = $state(false);
   let aiReady = $state(false);
+  let aiReadyLoading = $state(false);
+  let aiReadyChecked = $state(false);
   let installStatus = $state<InstallStatus | null>(null);
   let installBusy = $state(false);
   let aiPrompt = $state("");
@@ -42,9 +48,14 @@
   onMount(async () => {
     await refresh();
     if ($workspace?.initialized) {
-      await loadCategories();
-      await loadInstallStatus();
-      await loadAiReady();
+      void loadInstallStatus();
+      void loadCategories();
+      void loadAiReady();
+    }
+  });
+
+  $effect(() => {
+    if (tab === "tools" && $workspace?.initialized && !toolsLoaded) {
       loadToolsData();
     }
   });
@@ -58,8 +69,10 @@
   }
 
   async function loadCategories() {
+    categoriesLoading = true;
     try {
       categories = await api.listCategories();
+      categoriesLoaded = true;
       if (!selectedFileName && categories.length > 0) {
         selectedFileName = categories[0].file_name;
         await loadFileContent();
@@ -68,6 +81,10 @@
       }
     } catch (e) {
       console.error(e);
+      showToast(String(e), "error");
+      categoriesLoaded = true;
+    } finally {
+      categoriesLoading = false;
     }
   }
 
@@ -100,10 +117,14 @@
   }
 
   async function loadAiReady() {
+    aiReadyLoading = true;
     try {
       aiReady = await api.aiReady();
     } catch {
       aiReady = false;
+    } finally {
+      aiReadyLoading = false;
+      aiReadyChecked = true;
     }
   }
 
@@ -134,9 +155,12 @@
   async function handleInit() {
     await init();
     if ($workspace?.initialized) {
+      categoriesLoaded = false;
       await loadCategories();
       await loadInstallStatus();
+      aiReadyChecked = false;
       await loadAiReady();
+      toolsLoaded = false;
       loadToolsData();
     }
   }
@@ -233,20 +257,22 @@
       }
       installBusy = true;
       try {
-        installStatus = await api.uninstallModule();
-        successMsg.set("已软卸载");
+        const result = await api.uninstallModule();
+        installStatus = result.status;
+        showToast(result.message, result.verified ? "success" : "info", 6000);
       } catch (e) {
-        errorMsg.set(String(e));
+        showToast(String(e), "error", 6000);
       } finally {
         installBusy = false;
       }
     } else {
       installBusy = true;
       try {
-        installStatus = await api.installModule();
-        successMsg.set("安装完成：已同步 PS7 模块并写入 Profile");
+        const result = await api.installModule();
+        installStatus = result.status;
+        showToast(result.message, result.verified ? "success" : "info", 6000);
       } catch (e) {
-        errorMsg.set(String(e));
+        showToast(String(e), "error", 6000);
       } finally {
         installBusy = false;
       }
@@ -262,6 +288,7 @@
 </script>
 
 <main class="h-screen flex flex-col bg-slate-950">
+  <ToastHost />
   <header class="px-5 py-3 bg-slate-900/80 border-b border-slate-700 flex items-center justify-between">
     <div>
       <h1 class="text-lg font-bold text-cyan-300">DevShellTools Studio</h1>
@@ -284,7 +311,7 @@
       >
       <button
         class="px-3 py-1 text-xs rounded {tab === 'chat' ? 'bg-cyan-600 text-white' : 'bg-slate-700 text-slate-300 hover:bg-slate-600'}"
-        onclick={() => (tab = "chat")}>AI 助手 {aiReady ? "" : "(未配置)"}</button
+        onclick={() => (tab = "chat")}>AI 助手 {aiReadyLoading ? "…" : aiReady ? "" : "(未配置)"}</button
       >
       <button
         class="px-3 py-1 text-xs rounded {tab === 'tools' ? 'bg-cyan-600 text-white' : 'bg-slate-700 text-slate-300 hover:bg-slate-600'}"
@@ -311,7 +338,10 @@
   {/if}
 
   {#if $loading && !$workspace}
-    <div class="flex-1 flex items-center justify-center text-slate-400">加载中…</div>
+    <div class="flex-1 flex flex-col items-center justify-center text-slate-400 gap-3">
+      <div class="h-8 w-8 border-2 border-cyan-500/30 border-t-cyan-400 rounded-full animate-spin"></div>
+      <p class="text-sm">正在连接工作区…</p>
+    </div>
   {:else if !$workspace?.initialized}
     <div class="flex-1 flex items-center justify-center p-6">
       <div class="bg-slate-800/60 rounded-lg p-6 border border-slate-700 max-w-md w-full text-center">
@@ -342,7 +372,7 @@
   {:else}
     <div class="flex-1 overflow-hidden relative">
       <div class="absolute inset-0 flex overflow-hidden" class:hidden={tab !== "manage"} aria-hidden={tab !== "manage"}>
-        <CategoryList {categories} {selectedFileName} onSelect={onSelect} />
+        <CategoryList {categories} {selectedFileName} loading={categoriesLoading} onSelect={onSelect} />
         <CategoryEditor
           category={selectedCategory}
           {fileContent}
@@ -395,7 +425,9 @@
       </div>
 
       <div class="absolute inset-0 overflow-hidden" class:hidden={tab !== "chat"} aria-hidden={tab !== "chat"}>
-        {#if aiReady}
+        {#if aiReadyLoading}
+          <div class="h-full flex items-center justify-center text-slate-400 text-sm">正在检查 AI 配置…</div>
+        {:else if aiReady}
           <ChatPanel
             {categories}
             initialPrompt={aiPrompt}

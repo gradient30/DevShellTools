@@ -210,12 +210,12 @@ pub fn install_status() -> install_mgr::InstallStatus {
 }
 
 #[tauri::command]
-pub fn install_module() -> DstResult<install_mgr::InstallStatus> {
+pub fn install_module() -> DstResult<install_mgr::InstallResult> {
     install_mgr::install_module()
 }
 
 #[tauri::command]
-pub fn uninstall_module() -> DstResult<install_mgr::InstallStatus> {
+pub fn uninstall_module() -> DstResult<install_mgr::InstallResult> {
     install_mgr::uninstall_module()
 }
 
@@ -376,6 +376,49 @@ pub async fn test_ai_profile(id: String) -> DstResult<String> {
         return Err(DstError::Other("模型返回为空".into()));
     }
     Ok(full.chars().take(120).collect())
+}
+
+#[tauri::command]
+pub fn list_ai_presets() -> Vec<crate::ai_presets::AiPreset> {
+    crate::ai_presets::list_presets()
+}
+
+#[tauri::command]
+pub fn suggest_ai_endpoint(
+    protocol: ai_config::AiProtocol,
+    current_base_url: Option<String>,
+) -> crate::ai_presets::AiEndpointSuggestion {
+    crate::ai_presets::suggest_endpoint(protocol, current_base_url.as_deref())
+}
+
+#[derive(Debug, Clone, serde::Deserialize)]
+pub struct FetchModelsInput {
+    pub protocol: ai_config::AiProtocol,
+    pub base_url: String,
+    pub key: String,
+}
+
+#[tauri::command]
+pub async fn fetch_ai_models(id: String) -> DstResult<Vec<String>> {
+    let config = ai_config::load_config_for_profile(Some(&id))?;
+    let api_key = ai_config::load_key_for_profile(&id)?;
+    ai_client::list_models(&config, &api_key).await
+}
+
+/// 拉取模型预览（不持久化 Profile，供编辑对话框使用）。
+#[tauri::command]
+pub async fn fetch_ai_models_preview(input: FetchModelsInput) -> DstResult<Vec<String>> {
+    if input.key.trim().is_empty() {
+        return Err(DstError::Other("请先填写 API Key".into()));
+    }
+    let config = AiConfig {
+        protocol: input.protocol,
+        base_url: input.base_url,
+        model: String::new(),
+        temperature: 0.7,
+        max_tokens: 2048,
+    };
+    ai_client::list_models(&config, input.key.trim()).await
 }
 
 // ============ AI 对话 ============

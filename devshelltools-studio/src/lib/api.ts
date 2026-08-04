@@ -124,6 +124,27 @@ export interface InstallStatus {
   installed: boolean;
 }
 
+export interface InstallResult {
+  status: InstallStatus;
+  message: string;
+  verified: boolean;
+}
+
+export interface AiPreset {
+  id: string;
+  name: string;
+  protocol: AiProtocol;
+  base_url: string;
+  default_model: string;
+}
+
+export interface AiEndpointSuggestion {
+  base_url: string;
+  default_model: string;
+  protocol: AiProtocol;
+  note: string;
+}
+
 export interface FunctionTestResult {
   ok: boolean;
   stdout: string;
@@ -173,8 +194,8 @@ export const api = {
   applyAiCode: (fileName: string, code: string, message: string) =>
     invoke<string[]>("apply_ai_code", { fileName, code, message }),
   installStatus: () => invoke<InstallStatus>("install_status"),
-  installModule: () => invoke<InstallStatus>("install_module"),
-  uninstallModule: () => invoke<InstallStatus>("uninstall_module"),
+  installModule: () => invoke<InstallResult>("install_module"),
+  uninstallModule: () => invoke<InstallResult>("uninstall_module"),
   consistencyCheck: () => invoke<ConsistencyReport>("consistency_check"),
   safetyCheck: (code: string) => invoke<SafetyReport>("safety_check", { code }),
   validatePsSyntax: (code: string) => invoke<void>("validate_ps_syntax", { code }),
@@ -194,6 +215,17 @@ export const api = {
   deleteAiProfile: (id: string) => invoke<void>("delete_ai_profile", { id }),
   setDefaultAiProfile: (id: string) => invoke<void>("set_default_ai_profile", { id }),
   testAiProfile: (id: string) => invoke<string>("test_ai_profile", { id }),
+  listAiPresets: () => invoke<AiPreset[]>("list_ai_presets"),
+  suggestAiEndpoint: (protocol: AiProtocol, currentBaseUrl?: string) =>
+    invoke<AiEndpointSuggestion>("suggest_ai_endpoint", {
+      protocol,
+      currentBaseUrl: currentBaseUrl ?? null
+    }),
+  fetchAiModels: (id: string) => invoke<string[]>("fetch_ai_models", { id }),
+  fetchAiModelsPreview: (protocol: AiProtocol, baseUrl: string, key: string) =>
+    invoke<string[]>("fetch_ai_models_preview", {
+      input: { protocol, base_url: baseUrl, key }
+    }),
   aiChat: (messages: ChatMessage[], profileId?: string) =>
     invoke<string>("ai_chat", { messages, profileId: profileId ?? null }),
   aiChatWithValidation: (messages: ChatMessage[], profileId?: string) =>
