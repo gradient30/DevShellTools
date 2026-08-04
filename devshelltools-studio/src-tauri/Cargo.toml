@@ -25,7 +25,7 @@ chrono = "0.4"
 # M3：AI 集成。reqwest 已作为 tauri 间接依赖在缓存中（0.12.28）。
 # 流式响应用 reqwest 内置 response.bytes_stream()，无需 eventsource-stream。
 # 凭证改用文件加密存储（.studio/config.json），避免引入 keyring crate。
-reqwest = { version = "0.12", default-features = false, features = ["json", "stream"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "rustls-tls"] }
 futures-util = "0.3"
 # M4 再加入：zip
 

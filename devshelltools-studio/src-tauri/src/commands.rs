@@ -262,7 +262,7 @@ pub async fn test_ai_profile(id: String) -> DstResult<String> {
 }
 
 #[tauri::command]
-pub fn list_ai_presets() -> Vec<crate::ai_presets::AiPreset> { crate::ai_presets::list_presets() }
+pub fn list_ai_presets() -> Vec<crate::ai_presets::AiPresetView> { crate::ai_presets::list_preset_views() }
 
 #[tauri::command]
 pub fn suggest_ai_endpoint(protocol: ai_config::AiProtocol, current_base_url: Option<String>) -> crate::ai_presets::AiEndpointSuggestion {

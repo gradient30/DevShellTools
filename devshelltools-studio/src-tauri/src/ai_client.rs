@@ -256,14 +256,6 @@ async fn chat_anthropic(
     Ok(events)
 }
 
-/// 拉取可用模型列表（OpenAI 兼容走 /models，Anthropic 返回常用目录）。
-pub async fn list_models(config: &AiConfig, api_key: &str) -> DstResult<Vec<String>> {
-    match config.protocol {
-        AiProtocol::Openai => list_openai_models(config, api_key).await,
-        AiProtocol::Anthropic => Ok(crate::ai_presets::anthropic_model_catalog()),
-    }
-}
-
 #[derive(Deserialize)]
 struct OpenaiModelsResponse {
     data: Vec<OpenaiModelItem>,
@@ -274,21 +266,26 @@ struct OpenaiModelItem {
     id: String,
 }
 
-async fn list_openai_models(config: &AiConfig, api_key: &str) -> DstResult<Vec<String>> {
+/// 拉取可用模型列表。
+/// OpenAI 和 Anthropic 协议都走 GET /v1/models 真实拉取（DeepSeek 等 OpenAI 兼容服务也支持此端点）。
+/// Anthropic 官方 API 也可用 /v1/models（需 x-api-key 头）。
+pub async fn list_models(config: &AiConfig, api_key: &str) -> DstResult<Vec<String>> {
     let url = format!("{}/models", config.base_url.trim_end_matches('/'));
     let client = reqwest::Client::new();
-    let resp = client
-        .get(&url)
-        .bearer_auth(api_key)
-        .send()
-        .await
-        .map_err(DstError::Http)?;
+    let req = match config.protocol {
+        AiProtocol::Openai => client.get(&url).bearer_auth(api_key),
+        AiProtocol::Anthropic => client
+            .get(&url)
+            .header("x-api-key", api_key)
+            .header("anthropic-version", "2023-06-01"),
+    };
+    let resp = req.send().await.map_err(DstError::Http)?;
 
     if !resp.status().is_success() {
         let status = resp.status();
         let text = resp.text().await.unwrap_or_default();
         return Err(DstError::Other(format!(
-            "拉取模型失败 {status}：{text}（请确认协议为 OpenAI 兼容且 Base URL 正确，如 DeepSeek 应为 https://api.deepseek.com/v1）"
+            "拉取模型失败 {status}：{text}"
         )));
     }
 

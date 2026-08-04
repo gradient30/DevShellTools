@@ -17,6 +17,7 @@
   let testOk = $state(false);
   let testMsg = $state("");
   let endpointNote = $state("");
+  let testingProfile = $state<string | null>(null);
 
   let fetchingModels = $state(false);
   let modelOptions = $state<string[]>([]);
@@ -165,6 +166,18 @@
     }
   }
 
+  async function testProfile(id: string) {
+    testingProfile = id;
+    try {
+      const reply = await api.testAiProfile(id);
+      showToast(`测试通过：${reply.slice(0, 80)}`, "success", 4000);
+    } catch (e) {
+      showToast(`测试失败：${String(e).slice(0, 120)}`, "error", 5000);
+    } finally {
+      testingProfile = null;
+    }
+  }
+
   async function saveProfile() {
     if (!editing || !editing.name.trim()) {
       errMsg = "配置名称不能为空";
@@ -245,6 +258,9 @@
             {#if defaultId !== p.id}
               <button class="text-xs text-slate-400 hover:text-cyan-300" onclick={() => setDefault(p.id)}>设为默认</button>
             {/if}
+            <button class="text-xs text-emerald-400 hover:text-emerald-200" onclick={() => testProfile(p.id)} disabled={testingProfile === p.id}>
+              {testingProfile === p.id ? "测试中…" : "测试"}
+            </button>
             <button class="text-xs text-cyan-400 hover:text-cyan-200" onclick={() => openEdit(p)}>编辑</button>
             <button class="text-xs text-red-400 hover:text-red-300" onclick={() => remove(p.id)}>删除</button>
           </div>
