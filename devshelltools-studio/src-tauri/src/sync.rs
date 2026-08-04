@@ -5,7 +5,7 @@ use std::sync::Mutex;
 use std::time::SystemTime;
 
 /// 一个分类的完整信息（元数据 + 函数列表 + 文件名）。
-#[derive(Debug, Clone, serde::Serialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct CategoryInfo {
     pub file_name: String,   // 如 "Git.ps1"
     pub category: CategoryMeta,
@@ -17,7 +17,17 @@ struct CategoryCache {
     data: Vec<CategoryInfo>,
 }
 
+#[derive(serde::Serialize, serde::Deserialize)]
+struct DiskCategoryCache {
+    stamp: u64,
+    categories: Vec<CategoryInfo>,
+}
+
 static CATEGORY_CACHE: Mutex<Option<CategoryCache>> = Mutex::new(None);
+
+fn disk_cache_path() -> std::path::PathBuf {
+    workspace::studio_dir().join("categories_cache.json")
+}
 
 fn public_stamp() -> u64 {
     let public = workspace::workspace_root().join("Public");
@@ -25,8 +35,13 @@ fn public_stamp() -> u64 {
         return 0;
     }
     let mut max = 0u64;
+    let mut count = 0u64;
     if let Ok(entries) = std::fs::read_dir(&public) {
         for e in entries.flatten() {
+            if e.path().extension().and_then(|s| s.to_str()) != Some("ps1") {
+                continue;
+            }
+            count += 1;
             if let Ok(m) = e.metadata().and_then(|m| m.modified()) {
                 if let Ok(d) = m.duration_since(SystemTime::UNIX_EPOCH) {
                     max = max.max(d.as_secs());
@@ -34,53 +49,93 @@ fn public_stamp() -> u64 {
             }
         }
     }
-    max
+    max.wrapping_mul(1_000_003).wrapping_add(count)
+}
+
+fn load_disk_cache(stamp: u64) -> Option<Vec<CategoryInfo>> {
+    let path = disk_cache_path();
+    let content = std::fs::read_to_string(path).ok()?;
+    let cache: DiskCategoryCache = serde_json::from_str(&content).ok()?;
+    if cache.stamp == stamp {
+        Some(cache.categories)
+    } else {
+        None
+    }
+}
+
+fn save_disk_cache(stamp: u64, data: &[CategoryInfo]) -> DstResult<()> {
+    let _ = std::fs::create_dir_all(workspace::studio_dir());
+    let cache = DiskCategoryCache {
+        stamp,
+        categories: data.to_vec(),
+    };
+    let json = serde_json::to_string(&cache)?;
+    std::fs::write(disk_cache_path(), json)?;
+    Ok(())
 }
 
 pub fn invalidate_category_cache() {
     if let Ok(mut g) = CATEGORY_CACHE.lock() {
         *g = None;
     }
+    let _ = std::fs::remove_file(disk_cache_path());
 }
 
-/// 扫描工作区 Public/ 下所有 .ps1 文件，返回分类列表（带 mtime 缓存）。
-pub fn scan_categories_cached() -> DstResult<Vec<CategoryInfo>> {
+/// 返回 (分类列表, 是否来自缓存)。
+pub fn scan_categories_cached_with_meta() -> DstResult<(Vec<CategoryInfo>, bool)> {
     let stamp = public_stamp();
     if let Ok(g) = CATEGORY_CACHE.lock() {
         if let Some(c) = g.as_ref() {
             if c.stamp == stamp {
-                return Ok(c.data.clone());
+                return Ok((c.data.clone(), true));
             }
         }
     }
+    if let Some(data) = load_disk_cache(stamp) {
+        if let Ok(mut g) = CATEGORY_CACHE.lock() {
+            *g = Some(CategoryCache {
+                stamp,
+                data: data.clone(),
+            });
+        }
+        return Ok((data, true));
+    }
     let data = scan_categories()?;
+    let _ = save_disk_cache(stamp, &data);
     if let Ok(mut g) = CATEGORY_CACHE.lock() {
         *g = Some(CategoryCache {
             stamp,
             data: data.clone(),
         });
     }
-    Ok(data)
+    Ok((data, false))
+}
+
+/// 扫描工作区 Public/ 下所有 .ps1 文件，返回分类列表（内存 + 磁盘 mtime 缓存）。
+pub fn scan_categories_cached() -> DstResult<Vec<CategoryInfo>> {
+    scan_categories_cached_with_meta().map(|(data, _)| data)
 }
 
 /// 扫描工作区 Public/ 下所有 .ps1 文件，返回分类列表。
 /// 无 @DST-Category 块的文件（如 Help.ps1）被跳过。
 pub fn scan_categories() -> DstResult<Vec<CategoryInfo>> {
     let files = workspace::list_public_files()?;
+    let root = workspace::workspace_root();
+    let paths: Vec<std::path::PathBuf> = files
+        .iter()
+        .map(|f| root.join("Public").join(f))
+        .collect();
+    let parsed_batch = ps_parser::parse_public_batch(&paths)?;
     let mut out = vec![];
-    for f in files {
-        let rel = format!("Public/{f}");
-        let content = workspace::read_file(&rel)?;
-        let parsed = ps_parser::parse_ps1(&content)?;
+    for (file_name, parsed) in parsed_batch {
         if let Some(cat) = parsed.category {
             out.push(CategoryInfo {
-                file_name: f,
+                file_name,
                 category: cat,
                 functions: parsed.functions,
             });
         }
     }
-    // 按分类名排序，保证输出稳定
     out.sort_by(|a, b| a.category.name.cmp(&b.category.name));
     Ok(out)
 }

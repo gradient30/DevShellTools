@@ -72,8 +72,6 @@ pub fn migrate_from_legacy() -> DstResult<Vec<String>> {
     // 确保工作区已初始化
     if !workspace::is_initialized() {
         workspace::init_from_template()?;
-        let root = workspace::workspace_root();
-        crate::git::init_repo(&root)?;
     }
 
     let mut migrated = vec![];
@@ -99,11 +97,9 @@ pub fn migrate_from_legacy() -> DstResult<Vec<String>> {
         }
     }
 
-    // 重生成公共部分 + git 快照
+    // 重生成公共部分
     crate::sync::regenerate_all()?;
     crate::sync::invalidate_category_cache();
-    let root = workspace::workspace_root();
-    crate::git::snapshot(&root, "migrate: 从旧版安装迁移命令")?;
     workspace::touch_last_sync()?;
 
     Ok(migrated)

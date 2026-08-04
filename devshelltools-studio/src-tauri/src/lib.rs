@@ -6,7 +6,6 @@ pub mod consistency;
 pub mod error;
 pub mod export;
 pub mod function_edit;
-pub mod git;
 pub mod init_progress;
 pub mod install_mgr;
 pub mod logging;
@@ -56,9 +55,6 @@ pub fn run() {
             commands::consistency_check,
             commands::safety_check,
             commands::validate_ps_syntax,
-            commands::git_log,
-            commands::git_reset_hard,
-            commands::git_snapshot,
             commands::get_ai_config,
             commands::save_ai_config,
             commands::save_ai_key,

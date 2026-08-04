@@ -1,5 +1,5 @@
 use crate::error::{DstError, DstResult};
-use crate::{git, workspace};
+use crate::workspace;
 use serde::Serialize;
 use tauri::{AppHandle, Emitter};
 
@@ -22,6 +22,7 @@ pub fn emit_progress(app: &AppHandle, step: u8, label: &str, percent: u8) {
 }
 
 /// 分步初始化工作区，推送 init-progress 事件。
+/// 不涉及 git — 内部用户工具无需版本控制。
 pub fn init_with_progress(app: &AppHandle) -> DstResult<String> {
     if workspace::is_initialized() {
         return Err(DstError::WorkspaceExists(
@@ -29,16 +30,12 @@ pub fn init_with_progress(app: &AppHandle) -> DstResult<String> {
         ));
     }
 
-    emit_progress(app, 1, "写入模板文件…", 20);
+    emit_progress(app, 1, "写入模板文件…", 50);
     workspace::init_from_template()?;
 
-    emit_progress(app, 2, "创建 Studio 元数据…", 40);
-
-    emit_progress(app, 3, "初始化 Git 仓库…", 70);
-    let r = workspace::workspace_root();
-    git::init_repo(&r)?;
+    emit_progress(app, 2, "创建 Studio 元数据…", 80);
     workspace::touch_last_sync()?;
 
-    emit_progress(app, 4, "完成", 100);
-    git::head_oid(&r)
+    emit_progress(app, 3, "完成", 100);
+    Ok(workspace::workspace_root().display().to_string())
 }

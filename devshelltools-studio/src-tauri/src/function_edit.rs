@@ -1,6 +1,6 @@
 use crate::error::{DstError, DstResult};
 use crate::process_util::{output_hidden, ps_base_args};
-use crate::{git, ps_parser, safety, sync, workspace};
+use crate::{ps_parser, safety, sync, workspace};
 use serde::Serialize;
 use std::process::Command;
 
@@ -136,8 +136,7 @@ fn write_temp_ps1(content: &str) -> DstResult<std::path::PathBuf> {
 pub fn upsert_function(
     file_name: &str,
     draft: FunctionDraft,
-    message: &str,
-) -> DstResult<String> {
+) -> DstResult<()> {
     let rel = category_rel(file_name)?;
     validate_public_fn_name(&draft.name)?;
     let file_path = workspace::workspace_root().join(&rel);
@@ -184,14 +183,12 @@ $enc = New-Object System.Text.UTF8Encoding $true
     ps_parser::validate_syntax(&content)?;
     sync::regenerate_all()?;
     sync::invalidate_category_cache();
-    let r = workspace::workspace_root();
-    let oid = git::snapshot(&r, message)?;
-    workspace::touch_last_sync()?;
-    Ok(oid)
+        workspace::touch_last_sync()?;
+    Ok(())
 }
 
 /// 从分类文件删除函数。
-pub fn delete_function(file_name: &str, func_name: &str, message: &str) -> DstResult<String> {
+pub fn delete_function(file_name: &str, func_name: &str) -> DstResult<()> {
     let rel = category_rel(file_name)?;
     validate_public_fn_name(func_name)?;
     let file_path = workspace::workspace_root().join(&rel);
@@ -219,10 +216,8 @@ $enc = New-Object System.Text.UTF8Encoding $true
     run_ps_script(&script)?;
     sync::regenerate_all()?;
     sync::invalidate_category_cache();
-    let r = workspace::workspace_root();
-    let oid = git::snapshot(&r, message)?;
-    workspace::touch_last_sync()?;
-    Ok(oid)
+        workspace::touch_last_sync()?;
+    Ok(())
 }
 
 /// 在隔离进程中测试函数（dot-source + 执行 example）。
@@ -280,7 +275,6 @@ Write-Output $result
 pub fn apply_code_to_category(
     file_name: &str,
     code: &str,
-    message: &str,
 ) -> DstResult<Vec<String>> {
     let report = safety::check(code)?;
     if !report.ok {
@@ -358,8 +352,6 @@ $enc = New-Object System.Text.UTF8Encoding $true
     ps_parser::validate_syntax(&content)?;
     sync::regenerate_all()?;
     sync::invalidate_category_cache();
-    let r = workspace::workspace_root();
-    git::snapshot(&r, message)?;
-    workspace::touch_last_sync()?;
+        workspace::touch_last_sync()?;
     Ok(names)
 }

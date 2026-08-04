@@ -55,15 +55,21 @@
   }
 
   async function doImport() {
-    const dir = prompt("输入导入源目录（完整路径，含 DevShellTools.psd1）：");
+    const dir = prompt("输入导入源目录（含 .ps1 脚本的目录）：");
     if (!dir) return;
-    if (!confirm("导入会覆盖当前工作区内容（.git 保留）。确认？")) return;
+    if (!confirm("导入会逐个校验脚本语法和安全，通过才写入。确认导入？")) return;
     busy = true;
     errMsg = "";
     msg = "";
     try {
-      const files = await api.importWorkspace(dir);
-      msg = `已导入：${files.length} 项`;
+      const result = await api.importWorkspace(dir);
+      const parts = [`导入 ${result.imported.length} 个`];
+      if (result.skipped.length > 0) parts.push(`跳过 ${result.skipped.length} 个`);
+      if (result.errors.length > 0) parts.push(`${result.errors.length} 个错误`);
+      msg = parts.join("，");
+      if (result.errors.length > 0) {
+        errMsg = result.errors.join("\n");
+      }
       await onRefresh();
     } catch (e) {
       errMsg = String(e);
@@ -121,7 +127,7 @@
 
     <section class="bg-slate-800/60 rounded-lg p-4 border border-slate-700">
       <h3 class="text-sm font-semibold text-cyan-300 mb-2">导出 / 导入</h3>
-      <p class="text-xs text-slate-400 mb-3">导出整个工作区到目录（不含 .git）；从目录导入覆盖当前工作区。</p>
+      <p class="text-xs text-slate-400 mb-3">导出所有 Public/*.ps1 脚本到目录；从目录导入时逐个校验语法和安全，通过才写入。</p>
       <div class="flex gap-2">
         <button class="px-3 py-1.5 text-sm bg-cyan-600 hover:bg-cyan-500 rounded disabled:opacity-50" onclick={doExport} disabled={busy}>导出工作区</button>
         <button class="px-3 py-1.5 text-sm bg-slate-700 hover:bg-slate-600 rounded disabled:opacity-50" onclick={doImport} disabled={busy}>导入工作区</button>

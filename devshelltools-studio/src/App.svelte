@@ -11,7 +11,7 @@
     clearMessages
   } from "./lib/stores/workspace";
   import { showToast } from "./lib/stores/toast";
-  import { api, type CategoryInfo, type CommitInfo, type ConsistencyReport, type InstallStatus, type MigrationCheck, type PsFunction, type Webview2Status } from "./lib/api";
+  import { api, type CategoryInfo, type ConsistencyReport, type InstallStatus, type MigrationCheck, type PsFunction, type Webview2Status } from "./lib/api";
   import CategoryList from "./lib/components/CategoryList.svelte";
   import CategoryEditor from "./lib/components/CategoryEditor.svelte";
   import NewCategoryDialog from "./lib/components/NewCategoryDialog.svelte";
@@ -25,14 +25,13 @@
 
   let categories = $state<CategoryInfo[]>([]);
   let categoriesLoading = $state(false);
+  let categoriesLoadMsg = $state("");
   let categoriesLoaded = $state(false);
   let selectedFileName = $state<string | null>(null);
   let selectedCategory = $derived(categories.find((c) => c.file_name === selectedFileName) ?? null);
   let fileContent = $state("");
-  let commits = $state<CommitInfo[]>([]);
   let consistency = $state<ConsistencyReport | null>(null);
   let showNewDialog = $state(false);
-  let logsLoading = $state(false);
   let aiReady = $state(false);
   let aiReadyLoading = $state(false);
   let aiReadyChecked = $state(false);
@@ -69,10 +68,17 @@
   }
 
   async function loadCategories() {
+    if (categoriesLoading) return;
     categoriesLoading = true;
+    categoriesLoadMsg = "正在解析分类（PowerShell 元数据）…";
     try {
-      categories = await api.listCategories();
+      const result = await api.listCategories();
+      categories = result.categories;
       categoriesLoaded = true;
+      categoriesLoadMsg = result.cached ? "已从缓存加载分类" : "分类解析完成";
+      if (!result.cached) {
+        showToast("分类信息已更新", "success", 2500);
+      }
       if (!selectedFileName && categories.length > 0) {
         selectedFileName = categories[0].file_name;
         await loadFileContent();
@@ -83,8 +89,12 @@
       console.error(e);
       showToast(String(e), "error");
       categoriesLoaded = true;
+      categoriesLoadMsg = "加载失败";
     } finally {
       categoriesLoading = false;
+      setTimeout(() => {
+        categoriesLoadMsg = "";
+      }, 2000);
     }
   }
 
@@ -94,17 +104,6 @@
       fileContent = await api.readCategoryFile(selectedFileName);
     } catch (e) {
       console.error(e);
-    }
-  }
-
-  async function loadLog() {
-    logsLoading = true;
-    try {
-      commits = await api.gitLog(10);
-    } catch (e) {
-      console.error(e);
-    } finally {
-      logsLoading = false;
     }
   }
 
@@ -129,7 +128,7 @@
   }
 
   async function loadManageSidebar() {
-    await Promise.all([loadLog(), loadConsistency()]);
+    await loadConsistency();
   }
 
   async function loadToolsData() {
@@ -279,13 +278,7 @@
     }
   }
 
-  function fmtTime(secs: number): string {
-    return new Date(secs * 1000).toLocaleString("zh-CN");
-  }
-  function shortOid(oid: string): string {
-    return oid.slice(0, 8);
-  }
-</script>
+    </script>
 
 <main class="h-screen flex flex-col bg-slate-950">
   <ToastHost />
@@ -370,7 +363,15 @@
       </div>
     </div>
   {:else}
-    <div class="flex-1 overflow-hidden relative">
+    <div class="flex-1 flex flex-col min-h-0 overflow-hidden">
+    {#if categoriesLoading}
+      <div class="px-4 py-2 bg-cyan-950/70 border-b border-cyan-800/80 text-cyan-100 text-sm flex items-center gap-3 shrink-0">
+        <div class="h-4 w-4 border-2 border-cyan-400/30 border-t-cyan-400 rounded-full animate-spin shrink-0"></div>
+        <span>{categoriesLoadMsg || "正在加载分类信息…"}</span>
+        <span class="text-xs text-cyan-400/80 ml-auto">首次约 5–10 秒，之后从缓存秒开</span>
+      </div>
+    {/if}
+    <div class="flex-1 overflow-hidden relative min-h-0">
       <div class="absolute inset-0 flex overflow-hidden" class:hidden={tab !== "manage"} aria-hidden={tab !== "manage"}>
         <CategoryList {categories} {selectedFileName} loading={categoriesLoading} onSelect={onSelect} />
         <CategoryEditor
@@ -399,22 +400,6 @@
             <div class="text-xs text-slate-500 mb-3">
               实际 {consistency.actual_functions.length} · psd1 {consistency.psd1_exports.length}
             </div>
-          {/if}
-
-          <h3 class="text-xs font-semibold text-slate-400 mt-2 mb-2">Git 快照</h3>
-          {#if logsLoading}
-            <div class="h-12 bg-slate-800/40 rounded animate-pulse"></div>
-          {:else if commits.length === 0}
-            <p class="text-xs text-slate-500">暂无</p>
-          {:else}
-            <ul class="space-y-1.5 text-xs">
-              {#each commits as c}
-                <li class="border-l-2 border-slate-600 pl-2">
-                  <div class="text-slate-500 font-mono">{shortOid(c.oid)} · {fmtTime(c.time)}</div>
-                  <div class="text-slate-300">{c.message}</div>
-                </li>
-              {/each}
-            </ul>
           {/if}
 
           <div class="mt-4 flex gap-2">
@@ -455,6 +440,7 @@
           loaded={toolsLoaded}
           onRefresh={loadToolsData} />
       </div>
+    </div>
     </div>
   {/if}
 

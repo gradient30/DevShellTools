@@ -43,6 +43,11 @@ export interface CategoryInfo {
   functions: PsFunction[];
 }
 
+export interface ListCategoriesResult {
+  categories: CategoryInfo[];
+  cached: boolean;
+}
+
 export interface ConsistencyReport {
   ok: boolean;
   errors: string[];
@@ -116,6 +121,12 @@ export interface Webview2Status {
   needs_guidance: boolean;
 }
 
+export interface ImportResult {
+  imported: string[];
+  skipped: string[];
+  errors: string[];
+}
+
 export interface InstallStatus {
   workspace_ready: boolean;
   ps51_module_present: boolean;
@@ -158,19 +169,19 @@ export const api = {
     listen<InitProgress>("init-progress", (e) => handler(e.payload)),
   listPublicFiles: () => invoke<string[]>("list_public_files"),
   readWorkspaceFile: (rel: string) => invoke<string>("read_workspace_file", { rel }),
-  listCategories: () => invoke<CategoryInfo[]>("list_categories"),
+  listCategories: () => invoke<ListCategoriesResult>("list_categories"),
   readCategoryFile: (fileName: string) => invoke<string>("read_category_file", { fileName }),
   writeWorkspaceFile: (rel: string, content: string, message: string) =>
-    invoke<string>("write_workspace_file", { rel, content, message }),
+    invoke<void>("write_workspace_file", { rel, content, message }),
   deleteWorkspaceFile: (rel: string, message: string) =>
-    invoke<string>("delete_workspace_file", { rel, message }),
+    invoke<void>("delete_workspace_file", { rel, message }),
   createCategory: (fileName: string, content: string, message: string) =>
-    invoke<string>("create_category", { fileName, content, message }),
+    invoke<void>("create_category", { fileName, content, message }),
   deleteCategory: (fileName: string, message: string) =>
-    invoke<string>("delete_category", { fileName, message }),
+    invoke<void>("delete_category", { fileName, message }),
   updateCategoryFile: (fileName: string, content: string, message: string) =>
-    invoke<string>("update_category_file", { fileName, content, message }),
-  syncPublic: (message: string) => invoke<string>("sync_public", { message }),
+    invoke<void>("update_category_file", { fileName, content, message }),
+  syncPublic: (message: string) => invoke<void>("sync_public", { message }),
   upsertFunction: (
     fileName: string,
     name: string,
@@ -179,7 +190,7 @@ export const api = {
     body: string | null,
     message: string
   ) =>
-    invoke<string>("upsert_function", {
+    invoke<void>("upsert_function", {
       fileName,
       name,
       synopsis,
@@ -188,7 +199,7 @@ export const api = {
       message
     }),
   deleteFunction: (fileName: string, funcName: string, message: string) =>
-    invoke<string>("delete_function", { fileName, funcName, message }),
+    invoke<void>("delete_function", { fileName, funcName, message }),
   testFunction: (fileName: string, funcName: string) =>
     invoke<FunctionTestResult>("test_function", { fileName, funcName }),
   applyAiCode: (fileName: string, code: string, message: string) =>
@@ -199,9 +210,6 @@ export const api = {
   consistencyCheck: () => invoke<ConsistencyReport>("consistency_check"),
   safetyCheck: (code: string) => invoke<SafetyReport>("safety_check", { code }),
   validatePsSyntax: (code: string) => invoke<void>("validate_ps_syntax", { code }),
-  gitLog: (n?: number) => invoke<CommitInfo[]>("git_log", { n }),
-  gitResetHard: (oid: string) => invoke<void>("git_reset_hard", { oid }),
-  gitSnapshot: (message: string) => invoke<string>("git_snapshot", { message }),
   getAiConfig: () => invoke<AiConfig>("get_ai_config"),
   saveAiConfig: (config: AiConfig) => invoke<void>("save_ai_config", { config }),
   saveAiKey: (key: string) => invoke<void>("save_ai_key", { key }),
@@ -235,8 +243,8 @@ export const api = {
     }),
   checkMigration: () => invoke<MigrationCheck>("check_migration"),
   migrateLegacy: () => invoke<string[]>("migrate_legacy"),
-  exportWorkspace: (targetDir: string) => invoke<string>("export_workspace", { targetDir }),
-  importWorkspace: (sourceDir: string) => invoke<string[]>("import_workspace", { sourceDir }),
+  exportWorkspace: (targetDir: string) => invoke<string[]>("export_workspace", { targetDir }),
+  importWorkspace: (sourceDir: string) => invoke<ImportResult>("import_workspace", { sourceDir }),
   listLogs: () => invoke<string[]>("list_logs"),
   readLog: (name: string) => invoke<string>("read_log", { name }),
   webview2Status: () => invoke<Webview2Status>("webview2_status"),
