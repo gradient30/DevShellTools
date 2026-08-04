@@ -1,19 +1,19 @@
 # DevShellTools Studio 项目移交文档
 
-> 本文档面向接手负责人，汇总项目研发路线、完成进度、当前阻塞问题及关键决策。
-> 生成时间：2026-08-04
+> 本文档面向接手负责人，汇总项目研发路线、完成进度、当前状态及关键决策。
+> 更新时间：2026-08-04（M6.1 后最新版）
 
 ---
 
 ## 一、项目概览
 
-**DevShellTools Studio** 是一个 Tauri 2 便携桌面工具，用于可视化 管理 Windows PowerShell 开发快捷命令模块 DevShellTools。
+**DevShellTools Studio** 是一个 Tauri 2 便携桌面工具，用于可视化管理 Windows PowerShell 开发快捷命令模块 DevShellTools。
 
 - **仓库根目录**：`D:\workspace_test\github_desk\DevShellTools`
 - **Studio 子目录**：`devshelltools-studio/`
 - **当前版本**：1.0.5
-- **便携 exe**：`devshelltools-studio/src-tauri/target/release/devshelltools-studio.exe`（3.85 MB）
-- **技术栈**：Tauri 2.8.5 + Svelte 5（runes）+ Tailwind CSS 4 + Rust（edition 2021）
+- **便携 exe**：`devshelltools-studio/src-tauri/target/release/devshelltools-studio.exe`（3.96 MB）
+- **技术栈**：Tauri 2.8.5（devtools feature）+ Svelte 5（runes）+ Tailwind CSS 4 + Rust（edition 2021）
 - **构建工具**：pnpm + cargo（离线优先，依赖本地缓存）
 
 ---
@@ -22,26 +22,35 @@
 
 ### 里程碑总览
 
-| 里程碑 | 内容 | 状态 | 提交 | 测试 |
-|--------|------|------|------|------|
-| **M1** | Tauri 骨架 + 内嵌 1.0.5 模板 + 工作区初始化 + git 快照 | ✅ 完成 | `f8e5633` `47ae145` | lib 21 + M1 1 |
-| **M2** | CRUD 管理 + PS AST 解析 + 公共部分自动重生成 + 一致性校验 | ✅ 完成 | `d1f84f4` | + M2 4 |
-| **M3** | AI 集成（OpenAI/Anthropic 双协议 + Chat 引导生成命令） | ✅ 完成 | `c0bf9bf` | + M3 6 |
-| **M4** | 迁移助手 + 导出导入 + 操作日志 + WebView2 检测 | ✅ 完成 | `f199ccc` | + M4 5 |
-| **M5** | 黑屏修复 + 路径优化 + 最终验收打包 | ✅ 完成 | 未提交 | 52 测试全过 |
+| 里程碑 | 内容 | 状态 | 提交 | 测试数 |
+|--------|------|------|------|--------|
+| **M1** | Tauri 骨架 + 内嵌 1.0.5 模板 + 工作区初始化 + git 快照 | ✅ 完成 | `f8e5633` `47ae145` | 21 lib + 1 集成 |
+| **M2** | CRUD 管理 + PS AST 解析 + 公共部分自动重生成 + 一致性校验 | ✅ 完成 | `d1f84f4` | +4 集成 |
+| **M3** | AI 集成（OpenAI/Anthropic 双协议 + Chat 引导生成命令） | ✅ 完成 | `c0bf9bf` | +6 集成 |
+| **M4** | 迁移助手 + 导出导入 + 操作日志 + WebView2 检测 | ✅ 完成 | `f199ccc` | +5 集成 |
+| **M5** | release 黑屏修复 + 工作区路径变更 + 测试隔离锁 | ✅ 完成 | `f9ba6ef` | — |
+| **M6** | 静默子进程 + 初始化进度条 + 函数级 CRUD + 软安装/卸载 + 多 AI Profile + Toast | ✅ 完成 | `f9ba6ef` | +2 集成 |
+| **M6.1** | 安装反馈 + AI 预设/拉模型 + Toast 优化 + 启动懒加载 | ✅ 完成 | `1d77d41` | — |
+| **M6.2** | PS 批量解析 + 分类磁盘缓存 + UI 优化 | 🔧 未提交 | 工作区 | +1 lib |
 
-### 当前测试状态
+### 当前测试状态（最新验证）
 
-- **lib 单元测试**：36 passed / 0 failed
-- **M1 集成测试**：1 passed
-- **M2 集成测试**：4 passed
-- **M3 集成测试**：6 passed
-- **M4 集成测试**：5 passed
-- **总计**：52 测试全过
+| 套件 | 测试数 | 状态 |
+|------|--------|------|
+| lib 单元测试 | 37 | ✅ 全过 |
+| M1 集成测试 | 1 | ✅ 全过 |
+| M2 集成测试 | 4 | ✅ 全过（耗时约 4 分钟） |
+| M3 集成测试 | 6 | ✅ 全过 |
+| M4 集成测试 | 5 | ✅ 全过 |
+| M6 集成测试 | 2 | ✅ 全过 |
+| **总计** | **55** | **全过** |
 
 ### Git 提交历史
 
 ```
+1d77d41 fix(studio): M6.1 安装反馈、AI 预设/拉模型、Toast 与启动优化
+f9ba6ef feat(studio): M5 修复与 M6 体验/核心流程优化
+0834f0c docs: 生成项目移交文档（研发路线/进度/阻塞问题/构建命令）
 f199ccc feat(m4): 迁移助手 + 导出导入 + 操作日志 + WebView2 检测
 c0bf9bf feat(m3): AI 集成 - OpenAI/Anthropic 双协议 + Chat 引导生成命令
 5f45856 docs: 补充 AGENTS.md 仓库代理指南
@@ -49,6 +58,23 @@ d1f84f4 feat(m2): CRUD 管理 + PS AST 解析 + 公共部分自动重生成 + �
 47ae145 test(m1): 补充 M1 端到端验收集成测试
 f8e5633 chore: 初始化仓库并完成 M1 便携工具骨架
 ```
+
+### 未提交改动（M6.2 进行中）
+
+```
+ M devshelltools-studio/src-tauri/src/commands.rs  |  14 ++-
+ M devshelltools-studio/src-tauri/src/ps_parser.rs | 120 +++++++++++++++  # 批量解析 parse_public_batch
+ M devshelltools-studio/src-tauri/src/sync.rs     |  79 ++++++++++----      # 磁盘缓存 DiskCategoryCache
+ M devshelltools-studio/src/App.svelte             |  25 +++-
+ M devshelltools-studio/src/lib/api.ts             |   7 +-
+ 5 files changed, 228 insertions(+), 17 deletions(-)
+```
+
+**M6.2 改动内容**：
+- `ps_parser.rs`：新增 `parse_public_batch()` — 单次 PowerShell 进程批量解析多个 .ps1，避免逐个启动（性能优化）
+- `sync.rs`：新增 `DiskCategoryCache` — 分类列表磁盘缓存（`.studio/categories_cache.json`），避免每次 UI 加载都启动 PS 进程
+- `commands.rs`/`api.ts`：`list_categories` 返回 `ListCategoriesResult { categories, cached }` 标记是否命中缓存
+- `App.svelte`：启动懒加载优化
 
 ---
 
@@ -59,22 +85,27 @@ f8e5633 chore: 初始化仓库并完成 M1 便携工具骨架
 ```
 devshelltools-studio/
 ├─ package.json              # Svelte 5 + Vite 5 + Tailwind 4 + @tauri-apps/api 2.8.0
-├─ vite.config.ts            # 端口 1420；base: "./" 必须在 defineConfig 顶层
+├─ vite.config.ts            # 端口 1420；base: "./" 在 defineConfig 顶层（黑屏修复关键）
 ├─ svelte.config.js          # runes: true
 ├─ src/                      # 前端
 │  ├─ App.svelte             # 主界面（管理/AI/工具箱/设置 四个 tab）
 │  ├─ main.ts                # Svelte 5 mount 入口
 │  ├─ app.css                # Tailwind + 深色主题
 │  └─ lib/
-│     ├─ api.ts              # 全部 Tauri invoke 封装 + TypeScript 类型
-│     ├─ stores/workspace.ts # 工作区状态 store
+│     ├─ api.ts              # 全部 50 个 Tauri invoke 封装 + TypeScript 类型
+│     ├─ stores/
+│     │  ├─ workspace.ts     # 工作区状态 store
+│     │  ├─ workspace.svelte.ts # runes store
+│     │  └─ toast.ts         # Toast 通知 store
 │     └─ components/
 │        ├─ CategoryList.svelte      # 分类列表
 │        ├─ CategoryEditor.svelte    # 命令编辑器（含语法/安全校验）
+│        ├─ CommandTable.svelte      # 函数级 CRUD 表格（M6 新增）
 │        ├─ NewCategoryDialog.svelte # 新建分类对话框
 │        ├─ ChatPanel.svelte         # AI 对话面板（提议-确认流程）
-│        ├─ AiSettings.svelte        # AI 配置页
-│        └─ ToolsPage.svelte         # 工具箱（迁移/导出导入/日志/WebView2）
+│        ├─ AiSettings.svelte        # AI 配置页（多 Profile + 预设 + 拉模型）
+│        ├─ ToolsPage.svelte         # 工具箱（迁移/导出导入/日志/WebView2/安装卸载）
+│        └─ ToastHost.svelte         # Toast 通知容器（M6.1 新增）
 ├─ templates/                # 内嵌 1.0.5 模板（include_str! 编译期嵌入）
 │  ├─ DevShellTools.psd1     # 含 @DST-AUTOGENERATED@ 占位符
 │  ├─ DevShellTools.psm1     # 含 @DST-AUTOGENERATED@ 占位符
@@ -88,41 +119,52 @@ devshelltools-studio/
    ├─ capabilities/main.json # fs 读写权限
    ├─ src/
    │  ├─ main.rs             # 入口
-   │  ├─ lib.rs              # Tauri Builder + 25 个命令注册 + devtools setup
-   │  ├─ workspace.rs        # 工作区路径管理（见下方"路径变更"）
+   │  ├─ lib.rs              # Tauri Builder + 50 个命令注册 + debug DevTools
+   │  ├─ workspace.rs        # 工作区路径：Documents\WindowsPowerShell\Modules\DevShellTools
    │  ├─ template.rs         # include_str! 嵌入 11 个模板文件
-   │  ├─ ps_parser.rs        # 调 powershell.exe Parser 解析 AST（临时文件传参）
-   │  ├─ sync.rs             # 重生成 .psd1/.psm1/Help.ps1 占位符段
+   │  ├─ ps_parser.rs        # PS AST 解析（临时文件传参 + 批量解析优化）
+   │  ├─ sync.rs             # 重生成公共部分 + 内存+磁盘分类缓存
    │  ├─ consistency.rs      # 四方一致性校验
    │  ├─ safety.rs           # 7 条安全规则静态扫描
-   │  ├─ git.rs              # 系统 git 命令调用（init/snapshot/log/reset）
-   │  ├─ commands.rs         # 25 个 #[tauri::command] 函数
-   │  ├─ ai_config.rs        # AI 配置 + System Prompt + 代码块提取
-   │  ├─ ai_client.rs        # OpenAI/Anthropic 双协议流式 SSE
-   │  ├─ migrate.rs          # 旧版 install.ps1 安装检测 + 迁移
-   │  ├─ export.rs           # 工作区导出/导入（目录复制）
+   │  ├─ git.rs              # 系统 git 命令（静默子进程）
+   │  ├─ process_util.rs    # 子进程静默工具（CREATE_NO_WINDOW）M6 新增
+   │  ├─ init_progress.rs   # 初始化进度条事件 M6 新增
+   │  ├─ install_mgr.rs      # 软安装/卸载管理 M6 新增
+   │  ├─ function_edit.rs    # 函数级 CRUD（upsert/delete/test）M6 新增
+   │  ├─ commands.rs         # 50 个 #[tauri::command] 函数
+   │  ├─ ai_config.rs        # AI 配置 + 多 Profile + System Prompt
+   │  ├─ ai_client.rs        # OpenAI/Anthropic 双协议流式 SSE + 拉模型
+   │  ├─ ai_presets.rs       # AI 提供商预设 M6.1 新增
+   │  ├─ migrate.rs          # 旧版安装检测 + 迁移
+   │  ├─ export.rs           # 工作区导出/导入
    │  ├─ logging.rs          # 操作日志 + API key 脱敏
    │  ├─ webview2.rs         # WebView2 Runtime 检测
    │  └─ error.rs            # DstError 枚举
    └─ tests/
+      ├─ common/mod.rs       # USERPROFILE 隔离串行锁（M5 新增）
       ├─ m1_acceptance.rs    # M1 端到端验收（1 test）
       ├─ m2_acceptance.rs    # M2 端到端验收（4 tests）
       ├─ m3_acceptance.rs    # M3 端到端验收（6 tests）
       ├─ m4_acceptance.rs    # M4 端到端验收（5 tests）
-      └─ common/mod.rs       # USERPROFILE 隔离串行锁（避免并行测试污染）
+      └─ m6_acceptance.rs    # M6 端到端验收（2 tests）
 ```
 
-### 25 个 Tauri 命令
+### 50 个 Tauri 命令
 
-| 分类 | 命令 | 说明 |
-|------|------|------|
-| 工作区 | `workspace_status` `init_workspace` | 状态查询、初始化 |
-| 读取 | `list_public_files` `read_workspace_file` `list_categories` `read_category_file` | 文件/分类读取 |
-| CRUD | `write_workspace_file` `delete_workspace_file` `create_category` `delete_category` `update_category_file` `sync_public` | 增删改 + 公共部分重生成 |
-| 校验 | `consistency_check` `safety_check` `validate_ps_syntax` | 一致性/安全/语法 |
-| Git | `git_log` `git_reset_hard` `git_snapshot` | 快照历史/回滚 |
-| AI | `get_ai_config` `save_ai_config` `save_ai_key` `get_ai_key_status` `ai_ready` `ai_chat` `ai_chat_with_validation` | 双协议 AI 对话 |
-| M4 | `check_migration` `migrate_legacy` `export_workspace` `import_workspace` `list_logs` `read_log` `webview2_status` `webview2_download_url` | 迁移/导出导入/日志/WebView2 |
+| 分类 | 命令 | 说明 | 里程碑 |
+|------|------|------|--------|
+| 工作区 | `workspace_status` `init_workspace` | 状态查询、初始化（带进度条事件） | M1/M6 |
+| 读取 | `list_public_files` `read_workspace_file` `list_categories`（带缓存标记） `read_category_file` | 文件/分类读取 | M1/M6.2 |
+| 文件 CRUD | `write_workspace_file` `delete_workspace_file` `create_category` `delete_category` `update_category_file` `sync_public` | 增删改 + 公共部分重生成 | M2 |
+| 函数 CRUD | `upsert_function` `delete_function` `test_function` `apply_ai_code` | 函数级增删改 + 测试执行 + AI 代码应用 | M6 |
+| 安装管理 | `install_status` `install_module` `uninstall_module` | 软安装/卸载（调 install.ps1） | M6 |
+| 校验 | `consistency_check` `safety_check` `validate_ps_syntax` | 一致性/安全/语法 | M2 |
+| Git | `git_log` `git_reset_hard` `git_snapshot` | 快照历史/回滚 | M1 |
+| AI 配置 | `get_ai_config` `save_ai_config` `save_ai_key` `get_ai_key_status` `ai_ready` | 基础配置 | M3 |
+| AI Profile | `list_ai_profiles` `get_ai_profiles_meta` `save_ai_profile` `delete_ai_profile` `set_default_ai_profile` `test_ai_profile` | 多 Profile 管理 | M6 |
+| AI 预设/模型 | `list_ai_presets` `suggest_ai_endpoint` `fetch_ai_models` `fetch_ai_models_preview` | 预设端点 + 拉模型列表 | M6.1 |
+| AI 对话 | `ai_chat` `ai_chat_with_validation` | 双协议对话 + 代码校验 | M3/M6 |
+| M4 工具箱 | `check_migration` `migrate_legacy` `export_workspace` `import_workspace` `list_logs` `read_log` `webview2_status` `webview2_download_url` | 迁移/导出导入/日志/WebView2 | M4 |
 
 ---
 
@@ -135,114 +177,70 @@ devshelltools-studio/
 - `is_exported` 规则：函数名首字母小写=公共导出，大写=内部辅助（如 Assert-Git/Show-Dst*）
 
 ### 2. PS AST 解析方案
-- 不引入 Rust PS 解析 crate，而是调用系统 `powershell.exe` 的 `[System.Management.Automation.Language.Parser]::ParseInput`
+- 调用系统 `powershell.exe` 的 `[System.Management.Automation.Language.Parser]::ParseInput`
 - 通过临时文件传参（曾用 stdin 管道导致死锁，已修复）
+- M6.2 新增 `parse_public_batch()` 批量解析：单次 PS 进程处理多个文件，大幅减少启动开销
 - 提取：函数名、`.SYNOPSIS`、`.EXAMPLE`、`@DST-Category` 元数据块
 
 ### 3. 安全边界双重拦截
 - **生成时**：System Prompt 硬编码 7 条规则（force-push/hard-reset/clean-fd/Stop-Process/User-env/Remove-Item-Recurse/.SYNOPSIS 必填）
 - **应用前**：`safety::check()` 静态扫描 + `ps_parser::validate_syntax()` 语法校验，通过后才落盘
 
-### 4. AI 双协议适配
+### 4. AI 双协议 + 多 Profile
 - OpenAI：`{base_url}/chat/completions`，SSE `data: [DONE]` 结束
 - Anthropic：`{base_url}/messages`，`x-api-key` 头 + `anthropic-version: 2023-06-01`，SSE `message_stop` 结束
+- M6 多 Profile：每个 Profile 独立 protocol/base_url/model/key，可切换默认
+- M6.1 预设：内置常用提供商端点（OpenAI/Anthropic/DeepSeek/Moonshot 等），自动修正端点 URL
 - 凭证存 `.studio/ai_key.txt`（便携优先，避免 keyring crate 下载）
 
-### 5. 依赖策略（离线优先）
-- 全部 Rust crate 使用本地缓存或 crates.io 镜像下载
+### 5. 静默子进程（M6）
+- `process_util.rs` 封装 `CREATE_NO_WINDOW` flag，PS/Git 子进程不弹窗
+- `output_hidden()` 统一静默 stdout/stderr
+
+### 6. 依赖策略（离线优先）
 - `include_str!` 替代 `include_dir!`（零新增依赖）
 - 系统 git 替代 `git2` crate（零新增依赖）
 - 目录复制替代 `zip` crate（导出/导入零新增依赖）
-- reqwest 0.12 作为 tauri 间接依赖已在缓存中（M3 显式声明）
+- reqwest 0.12 作为 tauri 间接依赖已在缓存中
+
+### 7. release 黑屏修复（M5）
+- **根因**：`vite.config.ts` 把 `base: "./"` 误写在 `build` 块内，Vite 忽略，dist 仍用绝对路径 `/assets/...`
+- **修复**：`base: "./"` 提升到 `defineConfig` 顶层
+- `withGlobalTauri: true` + CSP 允许 `tauri:` 协议
+- `main.ts` Svelte 5 `mount()` 语法
+
+### 8. 工作区路径（M5 变更）
+- 从 `Documents\DevShellTools` 改为 `Documents\WindowsPowerShell\Modules\DevShellTools`
+- 与 `install.ps1` PS5.1 模块安装路径一致，便携工具直接管理系统安装路径
 
 ---
 
-## 五、M5 问题处理记录（2026-08-04 接手后）
+## 五、构建与测试命令
 
-### ✅ 问题1：release exe 启动后黑屏 — 已修复
-
-**根因**：`vite.config.ts` 把 `base: "./"` 误写在 `build` 块内，Vite 忽略该配置，`dist/index.html` 仍引用绝对路径 `/assets/...`。在 Tauri `tauri://` 协议下无法加载 JS/CSS，导致 Svelte 无法 mount，窗口黑屏。
-
-**修复**：将 `base: "./"` 提升到 `defineConfig` 顶层。重建后 `dist/index.html` 正确输出 `./assets/index-*.js`。
-
-**验证**：
-- `pnpm exec vite build` → `./assets/...` 相对路径
-- `pnpm exec tauri build --no-bundle` → exe 构建成功
-- 启动 release exe → 窗口标题 `DevShellTools Studio` 正常响应
-
-**保留的前序修复**（均有效，一并保留）：
-1. `main.ts` Svelte 5 `mount()` 语法
-2. `tauri.conf.json` `withGlobalTauri: true` + CSP
-3. `lib.rs` debug 模式自动 DevTools（release 不打开）
-
-### ✅ 问题2：工作区路径变更 — 已完成
-
-**变更**：`workspace_root()` → `%USERPROFILE%\Documents\WindowsPowerShell\Modules\DevShellTools`（与 `install.ps1` PS5.1 路径一致）。
-
-**配套修复**：
-- `migrate.rs` 增加旧 Studio 沙箱 `Documents\DevShellTools` 为迁移来源，并排除当前工作区目录
-- 验收测试改用 `tests/common/mod.rs` 串行锁隔离 USERPROFILE（修复 M2 并行竞态）
-- M4 导出/导入测试导出目录改到系统 temp（避免 profile 清理后丢失）
-
-### 🟡 问题3：未提交的改动 — 待 commit
-
-以下文件已修改，M5 功能验证通过，**建议下一步提交**：
-```
-M .gitignore
-M AGENTS.md
-M devshelltools-studio/vite.config.ts          # base 移到顶层（黑屏根因修复）
-M devshelltools-studio/src-tauri/Cargo.toml
-M devshelltools-studio/src-tauri/src/lib.rs
-M devshelltools-studio/src-tauri/src/workspace.rs
-M devshelltools-studio/src-tauri/src/migrate.rs
-M devshelltools-studio/src-tauri/tauri.conf.json
-M devshelltools-studio/src/main.ts
-M devshelltools-studio/src-tauri/tests/common/mod.rs   # 新增
-M devshelltools-studio/src-tauri/tests/m1_acceptance.rs
-M devshelltools-studio/src-tauri/tests/m2_acceptance.rs
-M devshelltools-studio/src-tauri/tests/m4_acceptance.rs
-```
-
----
-
-## 六、构建与测试命令
-
-### 构建
+### 构建便携 exe
 
 ```powershell
 cd devshelltools-studio
-
-# 前端依赖安装（首次）
-pnpm install --no-frozen-lockfile
-
-# 构建便携 exe（必须用 tauri CLI，不能用 cargo build --release）
+pnpm install --no-frozen-lockfile          # 首次
 $env:CARGO_NET_OFFLINE="true"
 pnpm exec tauri build --no-bundle
 # 产物：src-tauri/target/release/devshelltools-studio.exe
 ```
 
 > **重要**：必须用 `pnpm exec tauri build --no-bundle`，不能用 `cargo build --release`。
-> 后者绕过 Tauri CLI，导致 codegen 用 devUrl 而非 frontendDist，exe 启动后 ERR_CONNECTION_REFUSED。
+> 后者绕过 Tauri CLI，codegen 用 devUrl 而非 frontendDist，exe 启动后 ERR_CONNECTION_REFUSED。
 
 ### 测试
 
 ```powershell
 cd devshelltools-studio\src-tauri
 
-# lib 单元测试（36 个，约 20 秒）
-cargo test --offline --lib
-
-# M1 集成测试（1 个）
-cargo test --offline --test m1_acceptance
-
-# M2 集成测试（4 个，约 4 分钟；common 锁已串行化 USERPROFILE，可并行跑）
-cargo test --offline --test m2_acceptance
-
-# M3 集成测试（6 个，约 10 秒）
-cargo test --offline --test m3_acceptance
-
-# M4 集成测试（5 个，约 40 秒）
-cargo test --offline --test m4_acceptance
+cargo test --offline --lib                    # 37 单元测试（~15s）
+cargo test --offline --test m1_acceptance     # 1 test（~2s）
+cargo test --offline --test m2_acceptance     # 4 tests（~4min，需 --test-threads=1）
+cargo test --offline --test m3_acceptance     # 6 tests（~5s）
+cargo test --offline --test m4_acceptance     # 5 tests（~30s）
+cargo test --offline --test m6_acceptance     # 2 tests（~60s）
 ```
 
 ### 前端独立构建
@@ -269,47 +267,49 @@ Set-ExecutionPolicy -Scope Process Bypass
 
 ---
 
-## 七、待办事项（M5 及后续）
+## 六、待办事项
 
-### M5 收尾
+### 当前（M6.2 收尾）
 
-- [x] **修复 release exe 黑屏**（vite `base` 配置位置错误）
-- [x] 验证工作区路径变更后全量测试通过（52 测试）
-- [x] 生成最终便携 exe 包（`target/release/devshelltools-studio.exe`）
-- [ ] 提交 M5 改动
+- [ ] 提交 M6.2 改动（ps_parser 批量解析 + sync 磁盘缓存 + UI 优化）
+- [ ] 重新构建 release exe（含 M6.2 改动）
 
 ### 后续可选优化
 
-- [ ] 真正的 AI 流式逐 token 推送（当前是一次性返回全部 delta，用 Tauri event 实现）
-- [ ] 工作区 zip 打包（当前是目录复制，引入 `zip` crate 后可做单文件导出）
+- [ ] 真正的 AI 流式逐 token 推送（当前一次性返回全部 delta，用 Tauri event 实现）
+- [ ] 工作区 zip 打包（引入 `zip` crate 后可做单文件导出）
 - [ ] 凭证迁移到 Windows Credential Manager（引入 `keyring` crate）
 - [ ] Pester 测试覆盖 PowerShell 模块本身
 - [ ] CI/CD 自动构建发布
 
 ---
 
-## 八、注意事项
+## 七、注意事项
 
-1. **离线构建**：所有 cargo 命令加 `--offline` 和 `$env:CARGO_NET_OFFLINE="true"`，依赖在本地缓存
-2. **M2 测试慢**：约 4 分钟，因每次 `parse_ps1` 启动 powershell.exe 进程（~1-2s/次）；`tests/common/mod.rs` 串行锁已避免 USERPROFILE 并行污染
-3. **测试隔离**：M1/M2/M4 测试用 `IsolatedProfile` 临时 USERPROFILE 隔离工作区，M3 测试不涉及工作区
+1. **离线构建**：所有 cargo 命令加 `--offline` 和 `$env:CARGO_NET_OFFLINE="true"`
+2. **M2 测试慢**：约 4 分钟，因 `parse_ps1` 启动 powershell.exe；`tests/common/mod.rs` 串行锁避免并行污染
+3. **测试隔离**：M1/M2/M4/M6 测试用 `IsolatedProfile` 临时 USERPROFILE 隔离工作区
 4. **构建必须用 Tauri CLI**：`pnpm exec tauri build --no-bundle`，不能用 `cargo build --release`
-5. **版本号分散**：`Cargo.toml`、`package.json`、`tauri.conf.json`、`templates/DevShellTools.psd1`、`templates/install.ps1` 升版本时需逐一核对
-6. **同步脚本**：`git-sync-to-tcloud.sh` 不存在，如需同步需创建
+5. **vite base 配置**：`base: "./"` 必须在 `defineConfig` 顶层，不能写在 `build` 块内（否则黑屏）
+6. **版本号分散**：`Cargo.toml`、`package.json`、`tauri.conf.json`、`templates/DevShellTools.psd1`、`templates/install.ps1` 升版本时需逐一核对
+7. **同步脚本**：`git-sync-to-tcloud.sh` 不存在，如需同步需创建
 
 ---
 
-## 九、关键文件索引
+## 八、关键文件索引
 
 | 文件 | 作用 |
 |------|------|
 | `AGENTS.md` | 仓库级 AI 代理指南（项目结构、约定、工作流程） |
-| `devshelltools-studio/src-tauri/src/lib.rs` | Tauri 命令注册 + devtools setup |
-| `devshelltools-studio/src-tauri/src/workspace.rs` | 工作区路径（当前指向 `WindowsPowerShell\Modules\DevShellTools`） |
-| `devshelltools-studio/src-tauri/src/ps_parser.rs` | PS AST 解析（临时文件传参，避免 stdin 死锁） |
-| `devshelltools-studio/src-tauri/src/sync.rs` | 公共部分重生成（5 个占位符段） |
+| `devshelltools-studio/src-tauri/src/lib.rs` | Tauri 命令注册（50 个）+ devtools setup |
+| `devshelltools-studio/src-tauri/src/workspace.rs` | 工作区路径（`WindowsPowerShell\Modules\DevShellTools`） |
+| `devshelltools-studio/src-tauri/src/ps_parser.rs` | PS AST 解析（临时文件 + 批量解析） |
+| `devshelltools-studio/src-tauri/src/sync.rs` | 公共部分重生成 + 分类缓存（内存+磁盘） |
+| `devshelltools-studio/src-tauri/src/commands.rs` | 50 个 Tauri 命令实现 |
+| `devshelltools-studio/src-tauri/src/function_edit.rs` | 函数级 CRUD（M6 新增） |
+| `devshelltools-studio/src-tauri/src/install_mgr.rs` | 软安装/卸载（M6 新增） |
 | `devshelltools-studio/src-tauri/tauri.conf.json` | Tauri 配置（withGlobalTauri/CSP/frontendDist） |
+| `devshelltools-studio/vite.config.ts` | Vite 配置（**base 必须在顶层**） |
 | `devshelltools-studio/src/App.svelte` | 主界面（4 tab：管理/AI/工具箱/设置） |
-| `devshelltools-studio/src/lib/api.ts` | 全部 Tauri invoke 封装 + TS 类型 |
-| `devshelltools-studio/vite.config.ts` | Vite 配置（**base 必须在顶层**，非 build 块内） |
+| `devshelltools-studio/src/lib/api.ts` | 全部 50 个 Tauri invoke 封装 + TS 类型 |
 | `devshelltools-studio/templates/` | 内嵌 1.0.5 模板源（include_str! 编译期嵌入） |
