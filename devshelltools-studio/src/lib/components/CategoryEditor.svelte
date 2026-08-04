@@ -19,25 +19,33 @@
     onAiGenerate: (func: { name: string; synopsis: string; first_example: string } | null) => void;
   } = $props();
 
-  let editing = $state(false);
+  let view = $state<"overview" | "source">("overview");
   let draft = $state("");
   let commitMsg = $state("");
   let syntaxOk = $state<boolean | null>(null);
   let syntaxErr = $state<string | null>(null);
   let safetyReport = $state<SafetyReport | null>(null);
+  let dirty = $state(false);
+
+  // 行号计算
+  let draftLines = $derived(draft.split("\n"));
+  let lineCount = $derived(draftLines.length);
 
   function startEdit() {
     draft = fileContent;
-    editing = true;
+    view = "source";
     syntaxOk = null;
     syntaxErr = null;
     safetyReport = null;
+    dirty = false;
   }
 
   function cancelEdit() {
-    editing = false;
+    if (dirty && !confirm("有未保存的修改，确认放弃？")) return;
+    view = "overview";
     draft = "";
     commitMsg = "";
+    dirty = false;
   }
 
   async function validate() {
@@ -59,84 +67,156 @@
       commitMsg = `更新 ${category?.file_name ?? ""}`;
     }
     onSave(draft, commitMsg);
-    editing = false;
+    view = "overview";
+    dirty = false;
+  }
+
+  function onInput() {
+    dirty = true;
+    syntaxOk = null;
+    safetyReport = null;
   }
 
   let canSave = $derived(syntaxOk === true && (safetyReport?.ok ?? false));
+  let funcCount = $derived(category?.functions.length ?? 0);
 </script>
 
-<section class="flex-1 overflow-y-auto p-4">
+<section class="flex-1 flex flex-col overflow-hidden">
   {#if !category}
-    <div class="text-slate-500 text-sm">请从左侧选择一个分类。</div>
-  {:else if editing}
-    <div class="mb-3 flex items-center justify-between">
-      <h2 class="text-lg font-semibold text-cyan-300">编辑源码 · {category.file_name}</h2>
-      <div class="flex gap-2">
-        <button class="px-3 py-1 text-sm bg-slate-700 hover:bg-slate-600 rounded" onclick={validate}>校验</button>
+    <div class="flex-1 flex items-center justify-center text-slate-500 text-sm">
+      <div class="text-center">
+        <div class="text-4xl mb-3 opacity-30">📋</div>
+        <p>请从左侧选择一个分类</p>
+      </div>
+    </div>
+  {:else if view === "source"}
+    <!-- 源码编辑视图 -->
+    <div class="px-4 py-2.5 border-b border-slate-700 flex items-center justify-between bg-slate-900/50">
+      <div class="flex items-center gap-3">
+        <button class="text-slate-400 hover:text-slate-200 text-sm" onclick={() => view = "overview"}>
+          ← 返回概览
+        </button>
+        <span class="text-slate-600">|</span>
+        <h2 class="text-sm font-mono text-cyan-300">{category.file_name}</h2>
+        {#if dirty}<span class="text-xs text-amber-400">● 未保存</span>{/if}
+      </div>
+      <div class="flex items-center gap-2">
+        <button class="px-3 py-1 text-xs bg-slate-700 hover:bg-slate-600 rounded transition-colors" onclick={validate}>
+          校验
+        </button>
         <button
-          class="px-3 py-1 text-sm bg-cyan-600 hover:bg-cyan-500 rounded disabled:opacity-50"
+          class="px-3 py-1 text-xs bg-cyan-600 hover:bg-cyan-500 rounded transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
           onclick={save}
-          disabled={!canSave}>保存</button
-        >
-        <button class="px-3 py-1 text-sm bg-slate-700 hover:bg-slate-600 rounded" onclick={cancelEdit}>取消</button>
+          disabled={!canSave}>
+          保存
+        </button>
+        <button class="px-3 py-1 text-xs bg-slate-700 hover:bg-slate-600 rounded transition-colors" onclick={cancelEdit}>
+          取消
+        </button>
       </div>
     </div>
 
-    <input
-      type="text"
-      bind:value={commitMsg}
-      placeholder="提交说明（可选）"
-      class="w-full mb-2 px-3 py-1.5 text-sm bg-slate-800 border border-slate-700 rounded text-slate-200" />
-
-    <textarea
-      bind:value={draft}
-      rows="22"
-      class="w-full px-3 py-2 text-xs font-mono bg-slate-950 border border-slate-700 rounded text-slate-200 resize-y"
-      spellcheck="false"></textarea>
-
-    {#if syntaxOk === false}
-      <div class="mt-2 p-2 text-xs bg-red-900/40 border border-red-700 text-red-200 rounded">语法错误：{syntaxErr}</div>
-    {/if}
-    {#if syntaxOk === true}
-      <div class="mt-2 p-2 text-xs bg-green-900/40 border border-green-700 text-green-200 rounded">语法校验通过</div>
-    {/if}
-    {#if safetyReport && !safetyReport.ok}
-      <div class="mt-2 p-2 text-xs bg-red-900/40 border border-red-700 text-red-200 rounded">
-        安全拦截：{safetyReport.violations.join("；")}
+    <!-- 校验状态条 -->
+    {#if syntaxOk === true || syntaxOk === false || (safetyReport && !safetyReport.ok)}
+      <div class="px-4 py-1.5 border-b border-slate-700 space-y-1">
+        {#if syntaxOk === true}
+          <div class="flex items-center gap-1.5 text-xs text-green-400">
+            <span>✓</span> 语法校验通过 · {lineCount} 行
+          </div>
+        {:else if syntaxOk === false}
+          <div class="text-xs text-red-400">✗ 语法错误：{syntaxErr}</div>
+        {/if}
+        {#if safetyReport && !safetyReport.ok}
+          <div class="text-xs text-red-400">✗ 安全拦截：{safetyReport.violations.join("；")}</div>
+        {/if}
+        {#if safetyReport?.ok}
+          <div class="text-xs text-green-400">✓ 安全检查通过</div>
+        {/if}
       </div>
     {/if}
+
+    <!-- 提交说明 -->
+    <div class="px-4 py-2 border-b border-slate-700">
+      <input
+        type="text"
+        bind:value={commitMsg}
+        placeholder="提交说明（可选，默认&quot;更新 文件名&quot;）"
+        class="w-full px-3 py-1 text-xs bg-slate-800 border border-slate-700 rounded text-slate-300 placeholder-slate-600 focus:border-cyan-600 focus:outline-none" />
+    </div>
+
+    <!-- 代码编辑区：行号 + textarea -->
+    <div class="flex-1 overflow-auto bg-slate-950">
+      <div class="flex min-h-full">
+        <!-- 行号栏 -->
+        <div class="select-none py-3 px-2 text-right text-xs font-mono text-slate-600 bg-slate-900/30 border-r border-slate-800 leading-5 shrink-0" style="min-width: 3rem;">
+          {#each draftLines as _, i}
+            <div>{i + 1}</div>
+          {/each}
+        </div>
+        <!-- 代码区 -->
+        <textarea
+          bind:value={draft}
+          oninput={onInput}
+          rows="30"
+          class="flex-1 py-3 px-3 text-xs font-mono bg-slate-950 text-slate-200 leading-5 resize-none border-0 outline-none whitespace-pre"
+          spellcheck="false"
+          style="tab-size: 4;"></textarea>
+      </div>
+    </div>
+
+    <!-- 底部状态栏 -->
+    <div class="px-4 py-1.5 border-t border-slate-700 bg-slate-900/50 flex items-center justify-between text-xs text-slate-500">
+      <span>{lineCount} 行 · {draft.length} 字符</span>
+      <span class="font-mono">PowerShell · UTF-8</span>
+    </div>
   {:else}
-    <div class="mb-3 flex items-center justify-between">
-      <div>
-        <h2 class="text-lg font-semibold text-cyan-300">{category.category.title}</h2>
-        <p class="text-xs text-slate-400 mt-0.5">{category.category.description}</p>
+    <!-- 概览视图 -->
+    <div class="flex-1 overflow-y-auto p-5">
+      <!-- 分类标题区 -->
+      <div class="mb-5 flex items-start justify-between">
+        <div class="flex items-center gap-3">
+          <div class="w-10 h-10 rounded-lg bg-cyan-900/40 border border-cyan-700 flex items-center justify-center text-cyan-300 text-lg shrink-0">
+            📦
+          </div>
+          <div>
+            <h2 class="text-lg font-semibold text-cyan-300">{category.category.title}</h2>
+            <p class="text-xs text-slate-400 mt-0.5">{category.category.description}</p>
+          </div>
+        </div>
+        <div class="flex gap-2">
+          <button class="px-3 py-1.5 text-sm bg-slate-700 hover:bg-slate-600 rounded transition-colors" onclick={startEdit}>
+            ✏️ 编辑源码
+          </button>
+          <button
+            class="px-3 py-1.5 text-sm bg-red-800 hover:bg-red-700 rounded transition-colors"
+            onclick={() => onDelete(category.file_name)}>
+            🗑 删除
+          </button>
+        </div>
       </div>
-      <div class="flex gap-2">
-        <button class="px-3 py-1 text-sm bg-slate-700 hover:bg-slate-600 rounded" onclick={startEdit}>编辑源码</button>
-        <button
-          class="px-3 py-1 text-sm bg-red-700 hover:bg-red-600 rounded"
-          onclick={() => onDelete(category.file_name)}>删除</button
-        >
-      </div>
-    </div>
 
-    <div class="mb-4 grid grid-cols-2 gap-2 text-xs">
-      <div class="bg-slate-800/50 rounded p-2">
-        <span class="text-slate-400">关键字：</span>
-        <code class="text-cyan-300">{category.category.name}</code>
+      <!-- 元数据卡片 -->
+      <div class="mb-5 grid grid-cols-3 gap-3">
+        <div class="bg-slate-800/40 rounded-lg p-3 border border-slate-700/50">
+          <div class="text-xs text-slate-500 mb-1">关键字</div>
+          <code class="text-sm text-cyan-300 font-mono">{category.category.name}</code>
+        </div>
+        <div class="bg-slate-800/40 rounded-lg p-3 border border-slate-700/50">
+          <div class="text-xs text-slate-500 mb-1">别名</div>
+          <span class="text-sm text-slate-200">{category.category.aliases.length > 0 ? category.category.aliases.join(", ") : "无"}</span>
+        </div>
+        <div class="bg-slate-800/40 rounded-lg p-3 border border-slate-700/50">
+          <div class="text-xs text-slate-500 mb-1">命令数</div>
+          <span class="text-sm text-slate-200">{funcCount}</span>
+        </div>
       </div>
-      <div class="bg-slate-800/50 rounded p-2">
-        <span class="text-slate-400">别名：</span>
-        <span class="text-slate-200"
-          >{category.category.aliases.length > 0 ? category.category.aliases.join(", ") : "无"}</span
-        >
-      </div>
-    </div>
 
-    <CommandTable
-      fileName={category.file_name}
-      functions={category.functions}
-      onChanged={onChanged}
-      onAiGenerate={onAiGenerate} />
+      <!-- 命令列表 -->
+      <CommandTable
+        fileName={category.file_name}
+        functions={category.functions}
+        {onChanged}
+        {onAiGenerate} />
+    </div>
   {/if}
 </section>

@@ -160,9 +160,130 @@ $result | ConvertTo-Json -Depth 5 -Compress
     Ok(parsed)
 }
 
+/// 批量解析 Public 目录下多个 .ps1（单次 PowerShell 进程，避免逐个启动）。
+pub fn parse_public_batch(paths: &[std::path::PathBuf]) -> DstResult<Vec<(String, ParsedPsFile)>> {
+    if paths.is_empty() {
+        return Ok(vec![]);
+    }
+    let exe = which_powershell()?;
+    let path_literals: Vec<String> = paths
+        .iter()
+        .map(|p| format!("'{}'", p.to_string_lossy().replace('\'', "''")))
+        .collect();
+    let paths_ps = path_literals.join(", ");
+
+    let script = format!(
+        r#"$ErrorActionPreference = 'Stop'
+function Get-ParsedFile {{
+    param([string]$Path)
+    $fileName = [System.IO.Path]::GetFileName($Path)
+    $raw = Get-Content -LiteralPath $Path -Raw -Encoding UTF8
+    $errors = $null; $tokens = $null
+    $ast = [System.Management.Automation.Language.Parser]::ParseInput($raw, [ref]$tokens, [ref]$errors)
+    $parseErrors = @()
+    foreach ($e in $errors) {{ $parseErrors += ($e.Extent.StartLineNumber.ToString() + ':' + $e.Message) }}
+    $category = $null
+    $functions = @()
+    if ($null -ne $ast) {{
+        $text = $ast.ToString()
+        $m = [regex]::Match($text, '(?s)@DST-Category\s*\r?\n(.*?)\r?\n@DST-Category-End')
+        if ($m.Success) {{
+            $block = $m.Groups[1].Value
+            $name = ''; $title = ''; $description = ''; $aliases = @()
+            foreach ($line in $block -split "`r?`n") {{
+                if ($line -match '^\s*Name:\s*(.+?)\s*$') {{ $name = $Matches[1] }}
+                elseif ($line -match '^\s*Title:\s*(.+?)\s*$') {{ $title = $Matches[1] }}
+                elseif ($line -match '^\s*Description:\s*(.+?)\s*$') {{ $description = $Matches[1] }}
+                elseif ($line -match '^\s*Aliases:\s*(.*)$') {{
+                    $a = $Matches[1].Trim()
+                    if ($a) {{ $aliases = ($a -split ',') | ForEach-Object {{ $_.Trim() }} | Where-Object {{ $_ }} }}
+                }}
+            }}
+            if ($name) {{ $category = [PSCustomObject]@{{ name = $name; title = $title; description = $description; aliases = $aliases }} }}
+        }}
+        $fnAsts = $ast.FindAll({{ param($n, $_) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] }}, $true)
+        foreach ($fnAst in $fnAsts) {{
+            $synopsis = ''; $example = ''
+            $help = $fnAst.GetHelpContent()
+            if ($help.Synopsis) {{ $synopsis = $help.Synopsis.Trim() }}
+            if ($help.Examples -and $help.Examples.Count -gt 0) {{ $example = ($help.Examples[0] -split "`r?`n")[0].Trim() }}
+            $functions += [PSCustomObject]@{{ name = $fnAst.Name; synopsis = $synopsis; first_example = $example }}
+        }}
+    }}
+    [PSCustomObject]@{{ fileName = $fileName; category = $category; functions = $functions; parseErrors = $parseErrors }}
+}}
+$items = @()
+foreach ($p in @({paths_ps})) {{ $items += Get-ParsedFile -Path $p }}
+[PSCustomObject]@{{ items = $items }} | ConvertTo-Json -Depth 6 -Compress
+"#
+    );
+
+    let mut cmd = Command::new(exe);
+    for arg in ps_base_args(exe) {
+        cmd.arg(arg);
+    }
+    cmd.args(["-Command", &script]);
+    let output = output_hidden(cmd)
+        .map_err(|e| DstError::PsParse(format!("启动 powershell 失败：{e}")))?;
+
+    if !output.status.success() {
+        let err = String::from_utf8_lossy(&output.stderr);
+        return Err(DstError::PsParse(format!(
+            "powershell 退出码 {}：{}",
+            output.status,
+            err.trim()
+        )));
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let json_line = stdout
+        .lines()
+        .rev()
+        .find(|l| l.starts_with('{'))
+        .ok_or_else(|| DstError::PsParse(format!("未找到 JSON 输出，stdout: {}", stdout.trim())))?;
+
+    #[derive(Deserialize)]
+    struct BatchWrap {
+        items: Vec<ParsedPsFileWithName>,
+    }
+    #[derive(Deserialize)]
+    struct ParsedPsFileWithName {
+        #[serde(rename = "fileName")]
+        file_name: String,
+        category: Option<CategoryMeta>,
+        functions: Vec<PsFunction>,
+        #[serde(rename = "parseErrors")]
+        parse_errors: Vec<String>,
+    }
+
+    let wrapped: BatchWrap =
+        serde_json::from_str(json_line).map_err(|e| DstError::PsParse(format!("反序列化失败：{e}")))?;
+
+    let mut out = vec![];
+    for item in wrapped.items {
+        if !item.parse_errors.is_empty() {
+            return Err(DstError::PsParse(format!(
+                "{} 语法错误：{}",
+                item.file_name,
+                item.parse_errors.join("; ")
+            )));
+        }
+        out.push((
+            item.file_name,
+            ParsedPsFile {
+                category: item.category,
+                functions: item.functions,
+                parse_errors: vec![],
+            },
+        ));
+    }
+    Ok(out)
+}
+
 fn which_powershell() -> DstResult<&'static str> {
-    // 优先 pwsh（PS7），回退 powershell（PS5.1）
-    if Command::new("pwsh").arg("--version").output().is_ok() {
+    let mut cmd = std::process::Command::new("pwsh");
+    cmd.arg("--version");
+    if crate::process_util::output_hidden_ref(&mut cmd).is_ok() {
         return Ok("pwsh");
     }
     Ok("powershell")

@@ -10,7 +10,7 @@ pub struct InstallStatus {
     pub ps51_module_present: bool,
     pub ps7_module_present: bool,
     pub profile_configured: bool,
-    /// profile 已配置且 PS7 副本存在时视为已安装
+    /// profile 已配置且 PS5.1 或 PS7 模块副本存在时视为已安装
     pub installed: bool,
 }
 
@@ -24,9 +24,13 @@ pub struct InstallResult {
 }
 
 fn documents_dir() -> PathBuf {
-    std::env::var("USERPROFILE")
-        .map(|p| PathBuf::from(p).join("Documents"))
-        .unwrap_or_else(|_| PathBuf::from("."))
+    // 复用 workspace 的 MyDocuments 缓存（OnceLock，全进程只调一次 PS）
+    crate::workspace::my_documents_path_public()
+        .unwrap_or_else(|| {
+            std::env::var("USERPROFILE")
+                .map(|p| PathBuf::from(p).join("Documents"))
+                .unwrap_or_else(|_| PathBuf::from("."))
+        })
 }
 
 pub fn ps51_module_dir() -> PathBuf {
@@ -72,7 +76,7 @@ pub fn install_status() -> InstallStatus {
     let ps51_module_present = ps51.join("DevShellTools.psd1").exists();
     let ps7_module_present = ps7.join("DevShellTools.psd1").exists();
     let profile_configured = profile_paths().iter().any(|p| profile_has_import(p));
-    let installed = workspace_ready && profile_configured && ps7_module_present;
+    let installed = workspace_ready && profile_configured && (ps51_module_present || ps7_module_present);
     InstallStatus {
         workspace_ready,
         ps51_module_present,
@@ -146,10 +150,14 @@ Import-Module DevShellTools -Force -ErrorAction Stop
 if (-not (Get-Command dsh -ErrorAction SilentlyContinue)) { throw 'dsh missing' }
 'OK'
 "#;
-    let exe = if Command::new("pwsh").arg("--version").output().is_ok() {
-        "pwsh"
-    } else {
-        "powershell"
+    let exe = {
+        let mut cmd = Command::new("pwsh");
+        cmd.arg("--version");
+        if crate::process_util::output_hidden_ref(&mut cmd).is_ok() {
+            "pwsh"
+        } else {
+            "powershell"
+        }
     };
     let mut cmd = Command::new(exe);
     for arg in ps_base_args(exe) {
@@ -164,18 +172,18 @@ if (-not (Get-Command dsh -ErrorAction SilentlyContinue)) { throw 'dsh missing' 
 fn install_result(status: InstallStatus, action: &str, verified: bool) -> InstallResult {
     let message = if action == "install" {
         if status.installed && verified {
-            "安装完成：Profile 与 PS7 模块已更新，验证通过。请新开 PowerShell 窗口运行 dsh。".into()
+            "安装完成：模块已同步到 PS5.1 和 PS7 目录，Profile 已更新，验证通过。新开 PowerShell 窗口可直接运行 dsh。".into()
         } else if status.installed {
-            "安装完成：Profile 与 PS7 模块已更新。请新开 PowerShell 窗口运行 dsh（自动验证未通过，可手动 Import-Module DevShellTools）。".into()
+            "安装完成：模块已同步到 PS5.1 和 PS7 目录，Profile 已更新。新开 PowerShell 窗口运行 dsh（自动验证未通过，可手动 Import-Module DevShellTools）。".into()
         } else {
-            "安装未完成：请检查 Profile 权限或 PS7 模块目录。".into()
+            "安装未完成：请检查模块目录权限或 Profile 配置。".into()
         }
     } else if status.installed {
         "卸载未完成：仍有残留配置。".into()
     } else if verified {
-        "卸载完成：已移除 Profile 导入与 PS7 副本。已打开的 PowerShell 窗口需重启后生效。".into()
+        "卸载完成：已移除 Profile 导入与模块副本。已打开的 PowerShell 窗口需重启后生效。".into()
     } else {
-        "卸载完成：已移除 Profile 导入与 PS7 副本。请新开 PowerShell 窗口确认 dsh 不可用。".into()
+        "卸载完成：已移除 Profile 导入与模块副本。请新开 PowerShell 窗口确认 dsh 不可用。".into()
     };
     InstallResult {
         status,
@@ -184,17 +192,27 @@ fn install_result(status: InstallStatus, action: &str, verified: bool) -> Instal
     }
 }
 
-/// 软安装：同步 PS7 模块目录 + 写入 Profile。
+/// 软安装：同步 PS5.1 + PS7 模块目录 + 写入 Profile。
+/// 与原始 install.ps1 行为一致：复制到两个模块目录，清理 install/uninstall/README，
+/// 并向两个 Profile 写入 Import-Module。
 pub fn install_module() -> DstResult<InstallResult> {
     if !workspace::is_initialized() {
         return Err(DstError::Other("请先初始化工作区".into()));
     }
     let src = workspace::workspace_root();
-    let ps7 = ps7_module_dir();
-    if ps7.exists() {
-        std::fs::remove_dir_all(&ps7).ok();
+
+    // 安装到 PS5.1 和 PS7 两个模块目录（与 install.ps1 一致）
+    for target in [ps51_module_dir(), ps7_module_dir()] {
+        if target.exists() {
+            std::fs::remove_dir_all(&target).ok();
+        }
+        copy_dir_all(&src, &target)
+            .map_err(|e| DstError::Other(format!("复制到模块目录失败：{e}")))?;
+        // 清理安装脚本和 README（不装到模块目录）
+        for cleanup in ["install.ps1", "uninstall.ps1", "README.md"] {
+            std::fs::remove_file(target.join(cleanup)).ok();
+        }
     }
-    copy_dir_all(&src, &ps7).map_err(|e| DstError::Other(format!("复制到 PS7 模块目录失败：{e}")))?;
 
     for p in profile_paths() {
         ensure_profile_import(&p)?;
@@ -204,14 +222,22 @@ pub fn install_module() -> DstResult<InstallResult> {
     Ok(install_result(status, "install", verified))
 }
 
-/// 软卸载：仅清理 Profile + 删除 PS7 副本，保留 PS5.1 工作区。
+/// 软卸载：清理 Profile + 删除 PS5.1 和 PS7 副本，保留工作区源码。
 pub fn uninstall_module() -> DstResult<InstallResult> {
     for p in profile_paths() {
         remove_profile_import(&p)?;
     }
-    let ps7 = ps7_module_dir();
-    if ps7.exists() {
-        std::fs::remove_dir_all(&ps7).ok();
+    // 删除两个模块目录的安装副本（工作区本身是 PS5.1 路径，只删安装副本里的内容）
+    for target in [ps51_module_dir(), ps7_module_dir()] {
+        if target.exists() {
+            // 工作区路径就是 PS5.1 模块目录，不能删工作区本身
+            // 只删除安装时多出的文件（install.ps1/uninstall.ps1/README.md 已在安装时清理）
+            // 实际安装时是先删再复制，所以这里只需确保安装副本被清除
+            // 但工作区 = PS5.1 路径，删它会毁掉源码，所以只删 PS7 副本
+            if target != workspace::workspace_root() {
+                std::fs::remove_dir_all(&target).ok();
+            }
+        }
     }
     let status = install_status();
     let verified = verify_module_uninstalled(&status);

@@ -21,6 +21,7 @@
   let draftExample = $state("");
   let busy = $state(false);
   let errMsg = $state<string | null>(null);
+  let expandedName = $state<string | null>(null);
 
   function startAdd() {
     editingName = "__new__";
@@ -28,6 +29,7 @@
     draftSynopsis = "";
     draftExample = "";
     errMsg = null;
+    expandedName = null;
   }
 
   function startEdit(f: PsFunction) {
@@ -36,11 +38,16 @@
     draftSynopsis = f.synopsis;
     draftExample = f.first_example || f.name;
     errMsg = null;
+    expandedName = null;
   }
 
   function cancelEdit() {
     editingName = null;
     errMsg = null;
+  }
+
+  function toggleExpand(name: string) {
+    expandedName = expandedName === name ? null : name;
   }
 
   async function save() {
@@ -99,66 +106,113 @@
 </script>
 
 <div>
-  <div class="flex items-center justify-between mb-2">
-    <h3 class="text-sm font-semibold text-slate-300">命令列表</h3>
+  <!-- 标题栏 -->
+  <div class="flex items-center justify-between mb-3">
+    <h3 class="text-sm font-semibold text-slate-300 flex items-center gap-2">
+      <span class="text-cyan-400">⚡</span> 命令列表
+      <span class="text-xs text-slate-500 font-normal">({functions.length})</span>
+    </h3>
     <button
-      class="px-2 py-1 text-xs bg-cyan-600 hover:bg-cyan-500 rounded disabled:opacity-50"
+      class="px-3 py-1 text-xs bg-cyan-600 hover:bg-cyan-500 rounded transition-colors disabled:opacity-50 flex items-center gap-1"
       onclick={startAdd}
-      disabled={busy}>+ 添加命令</button
-    >
+      disabled={busy}>
+      + 添加命令
+    </button>
   </div>
 
   {#if errMsg}
-    <div class="mb-2 p-2 text-xs bg-red-900/40 border border-red-700 text-red-200 rounded">{errMsg}</div>
+    <div class="mb-3 p-2.5 text-xs bg-red-900/40 border border-red-700 text-red-200 rounded">{errMsg}</div>
   {/if}
 
+  <!-- 新建/编辑表单 -->
   {#if editingName}
-    <div class="mb-3 p-3 bg-slate-800/60 border border-slate-700 rounded space-y-2">
-      <div class="grid grid-cols-3 gap-2">
-        <input
-          bind:value={draftName}
-          placeholder="命令名"
-          disabled={editingName !== "__new__"}
-          class="px-2 py-1 text-xs bg-slate-950 border border-slate-700 rounded font-mono" />
-        <input
-          bind:value={draftSynopsis}
-          placeholder="说明"
-          class="px-2 py-1 text-xs bg-slate-950 border border-slate-700 rounded col-span-2" />
+    <div class="mb-3 p-4 bg-slate-800/60 border border-cyan-700/50 rounded-lg space-y-3">
+      <div class="text-xs text-cyan-300 font-semibold mb-1">
+        {editingName === "__new__" ? "✨ 新建命令" : `编辑 ${editingName}`}
       </div>
-      <input
-        bind:value={draftExample}
-        placeholder="示例（如 gs）"
-        class="w-full px-2 py-1 text-xs bg-slate-950 border border-slate-700 rounded font-mono" />
-      <div class="flex gap-2">
-        <button class="px-2 py-1 text-xs bg-cyan-600 hover:bg-cyan-500 rounded" onclick={save} disabled={busy}>保存</button>
-        <button class="px-2 py-1 text-xs bg-slate-700 hover:bg-slate-600 rounded" onclick={cancelEdit}>取消</button>
+      <div class="grid grid-cols-3 gap-3">
+        <div>
+          <label class="block text-xs text-slate-500 mb-1">命令名</label>
+          <input
+            bind:value={draftName}
+            placeholder="如 gs"
+            disabled={editingName !== "__new__"}
+            class="w-full px-2.5 py-1.5 text-xs bg-slate-950 border border-slate-700 rounded font-mono text-cyan-200 focus:border-cyan-600 focus:outline-none disabled:opacity-60" />
+        </div>
+        <div class="col-span-2">
+          <label class="block text-xs text-slate-500 mb-1">说明（SYNOPSIS）</label>
+          <input
+            bind:value={draftSynopsis}
+            placeholder="如 查看 Git 状态"
+            class="w-full px-2.5 py-1.5 text-xs bg-slate-950 border border-slate-700 rounded text-slate-200 focus:border-cyan-600 focus:outline-none" />
+        </div>
+      </div>
+      <div>
+        <label class="block text-xs text-slate-500 mb-1">示例（EXAMPLE）</label>
+        <input
+          bind:value={draftExample}
+          placeholder="如 gs"
+          class="w-full px-2.5 py-1.5 text-xs bg-slate-950 border border-slate-700 rounded font-mono text-slate-300 focus:border-cyan-600 focus:outline-none" />
+      </div>
+      <div class="flex gap-2 pt-1">
+        <button class="px-3 py-1.5 text-xs bg-cyan-600 hover:bg-cyan-500 rounded transition-colors disabled:opacity-50" onclick={save} disabled={busy}>
+          保存
+        </button>
+        <button class="px-3 py-1.5 text-xs bg-slate-700 hover:bg-slate-600 rounded transition-colors" onclick={cancelEdit}>
+          取消
+        </button>
       </div>
     </div>
   {/if}
 
-  <table class="w-full text-xs">
-    <thead class="text-slate-400 border-b border-slate-700">
-      <tr>
-        <th class="text-left py-1.5 pr-2">命令</th>
-        <th class="text-left py-1.5 pr-2">说明</th>
-        <th class="text-left py-1.5 pr-2">示例</th>
-        <th class="text-right py-1.5">操作</th>
-      </tr>
-    </thead>
-    <tbody>
+  <!-- 命令卡片列表 -->
+  {#if functions.length === 0 && !editingName}
+    <div class="text-center py-8 text-slate-600 text-sm">
+      暂无命令，点击"添加命令"创建
+    </div>
+  {:else}
+    <div class="space-y-2">
       {#each functions as f (f.name)}
-        <tr class="border-b border-slate-800 align-top">
-          <td class="py-1.5 pr-2 font-mono text-cyan-200">{f.name}</td>
-          <td class="py-1.5 pr-2 text-slate-300">{f.synopsis || "(无说明)"}</td>
-          <td class="py-1.5 pr-2 font-mono text-slate-400">{f.first_example || f.name}</td>
-          <td class="py-1.5 text-right whitespace-nowrap">
-            <button class="text-cyan-400 hover:text-cyan-200 mr-2" onclick={() => startEdit(f)} disabled={busy}>编辑</button>
-            <button class="text-emerald-400 hover:text-emerald-200 mr-2" onclick={() => test(f.name)} disabled={busy}>测试</button>
-            <button class="text-amber-400 hover:text-amber-200 mr-2" onclick={() => onAiGenerate(f)} disabled={busy}>AI</button>
-            <button class="text-red-400 hover:text-red-300" onclick={() => remove(f.name)} disabled={busy}>删</button>
-          </td>
-        </tr>
+        <div class="bg-slate-800/40 border border-slate-700/50 rounded-lg overflow-hidden transition-all hover:border-slate-600">
+          <!-- 命令行 -->
+          <div class="flex items-center justify-between px-3 py-2.5 cursor-pointer hover:bg-slate-800/60" onclick={() => toggleExpand(f.name)}>
+            <div class="flex items-center gap-3 min-w-0">
+              <code class="text-sm font-mono text-cyan-300 font-medium shrink-0">{f.name}</code>
+              <span class="text-xs text-slate-400 truncate">{f.synopsis || "(无说明)"}</span>
+            </div>
+            <div class="flex items-center gap-1 shrink-0" onclick={(e) => e.stopPropagation()}>
+              <button class="px-2 py-0.5 text-xs text-cyan-400 hover:text-cyan-200 hover:bg-cyan-900/30 rounded transition-colors" onclick={() => startEdit(f)} disabled={busy}>
+                编辑
+              </button>
+              <button class="px-2 py-0.5 text-xs text-emerald-400 hover:text-emerald-200 hover:bg-emerald-900/30 rounded transition-colors" onclick={() => test(f.name)} disabled={busy}>
+                测试
+              </button>
+              <button class="px-2 py-0.5 text-xs text-amber-400 hover:text-amber-200 hover:bg-amber-900/30 rounded transition-colors" onclick={() => onAiGenerate(f)} disabled={busy}>
+                AI
+              </button>
+              <button class="px-2 py-0.5 text-xs text-red-400 hover:text-red-200 hover:bg-red-900/30 rounded transition-colors" onclick={() => remove(f.name)} disabled={busy}>
+                删
+              </button>
+              <span class="text-slate-600 text-xs ml-1">{expandedName === f.name ? "▾" : "▸"}</span>
+            </div>
+          </div>
+          <!-- 展开详情 -->
+          {#if expandedName === f.name}
+            <div class="px-3 py-2.5 border-t border-slate-700/50 bg-slate-950/30">
+              <div class="grid grid-cols-2 gap-2 text-xs">
+                <div>
+                  <span class="text-slate-500">示例：</span>
+                  <code class="text-slate-300 font-mono">{f.first_example || f.name}</code>
+                </div>
+                <div>
+                  <span class="text-slate-500">说明：</span>
+                  <span class="text-slate-300">{f.synopsis || "(无)"}</span>
+                </div>
+              </div>
+            </div>
+          {/if}
+        </div>
       {/each}
-    </tbody>
-  </table>
+    </div>
+  {/if}
 </div>

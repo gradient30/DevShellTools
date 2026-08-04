@@ -20,7 +20,9 @@ pub struct FunctionTestResult {
 }
 
 fn ps_exe() -> DstResult<&'static str> {
-    if Command::new("pwsh").arg("--version").output().is_ok() {
+    let mut cmd = Command::new("pwsh");
+    cmd.arg("--version");
+    if crate::process_util::output_hidden_ref(&mut cmd).is_ok() {
         Ok("pwsh")
     } else {
         Ok("powershell")

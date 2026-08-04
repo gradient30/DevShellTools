@@ -1,13 +1,45 @@
 use crate::error::{DstError, DstResult};
+use crate::process_util::output_hidden;
 use std::path::PathBuf;
+use std::sync::OnceLock;
+
+static MY_DOCS_CACHE: OnceLock<Option<PathBuf>> = OnceLock::new();
 
 /// 工作区固定路径：Documents\WindowsPowerShell\Modules\DevShellTools
 /// 与 install.ps1 安装到 PS5.1 的默认模块目录一致，便携工具直接管理系统安装路径。
+/// 注意：Documents 通过系统 MyDocuments 特殊文件夹获取（支持重定向），非 USERPROFILE\Documents。
 pub fn workspace_root() -> PathBuf {
-    let docs = std::env::var("USERPROFILE")
-        .map(|p| PathBuf::from(p).join("Documents"))
-        .unwrap_or_else(|_| PathBuf::from("."));
+    let docs = my_documents_path()
+        .unwrap_or_else(|| {
+            std::env::var("USERPROFILE")
+                .map(|p| PathBuf::from(p).join("Documents"))
+                .unwrap_or_else(|_| PathBuf::from("."))
+        });
     docs.join("WindowsPowerShell").join("Modules").join("DevShellTools")
+}
+
+/// 获取 MyDocuments 路径（与 install.ps1 的 [Environment]::GetFolderPath('MyDocuments') 一致）。
+/// 用 OnceLock 缓存，全进程只调一次 powershell.exe（静默无窗口）。
+fn my_documents_path() -> Option<PathBuf> {
+    let ref_opt: &Option<PathBuf> = MY_DOCS_CACHE.get_or_init(|| {
+        let mut cmd = std::process::Command::new("powershell");
+        cmd.args(["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass",
+                    "-Command", "[Environment]::GetFolderPath('MyDocuments')"]);
+        let output = output_hidden(cmd);
+        match output {
+            Ok(o) if o.status.success() => {
+                let path = String::from_utf8_lossy(&o.stdout).trim().to_string();
+                if path.is_empty() { None } else { Some(PathBuf::from(path)) }
+            }
+            _ => None,
+        }
+    });
+    ref_opt.clone()
+}
+
+/// 公开接口供 install_mgr / migrate 复用缓存。
+pub fn my_documents_path_public() -> Option<PathBuf> {
+    my_documents_path().clone()
 }
 
 /// .studio 子目录（日志、运行时元数据）

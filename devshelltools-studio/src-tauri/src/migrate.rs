@@ -3,9 +3,13 @@ use crate::workspace;
 use std::path::{Path, PathBuf};
 
 fn documents_dir() -> PathBuf {
-    std::env::var("USERPROFILE")
-        .map(|p| PathBuf::from(p).join("Documents"))
-        .unwrap_or_else(|_| PathBuf::from("."))
+    // 复用 workspace 的 MyDocuments 缓存
+    crate::workspace::my_documents_path_public()
+        .unwrap_or_else(|| {
+            std::env::var("USERPROFILE")
+                .map(|p| PathBuf::from(p).join("Documents"))
+                .unwrap_or_else(|_| PathBuf::from("."))
+        })
 }
 
 /// 可能含有待迁移命令的目录：旧 Studio 沙箱 + install.ps1 的两个目标目录。

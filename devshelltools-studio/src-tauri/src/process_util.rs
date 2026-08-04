@@ -20,6 +20,12 @@ pub fn output_hidden(mut cmd: Command) -> std::io::Result<Output> {
     cmd.output()
 }
 
+/// 静默执行（接受 &mut Command，用于链式调用场景）。
+pub fn output_hidden_ref(cmd: &mut Command) -> std::io::Result<Output> {
+    configure_hidden(cmd);
+    cmd.output()
+}
+
 /// PowerShell 通用参数前缀（隐藏窗口 + 非交互）。
 pub fn ps_base_args(exe: &str) -> Vec<String> {
     let mut args = vec![
