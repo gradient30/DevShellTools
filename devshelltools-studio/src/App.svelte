@@ -51,6 +51,10 @@
       void loadCategories();
       void loadAiReady();
     }
+    // AI 配置变更后即时刷新 AI 助手状态
+    window.addEventListener("ai-config-changed", () => {
+      void loadAiReady();
+    });
   });
 
   $effect(() => {

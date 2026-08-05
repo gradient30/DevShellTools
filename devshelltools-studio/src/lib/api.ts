@@ -144,9 +144,11 @@ export interface InstallResult {
 export interface AiPreset {
   id: string;
   name: string;
-  protocol: AiProtocol;
-  base_url: string;
-  default_model: string;
+  openai_base_url: string;
+  anthropic_base_url: string;
+  openai_default_model: string;
+  anthropic_default_model: string;
+  supports_anthropic: boolean;
 }
 
 export interface AiEndpointSuggestion {

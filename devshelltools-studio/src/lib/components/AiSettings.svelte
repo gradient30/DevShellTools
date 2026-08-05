@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { api, type AiPreset, type AiProfile, type AiProtocol } from "../api";
+  import { showToast } from "../stores/toast";
 
   let profiles = $state<AiProfile[]>([]);
   let presets = $state<AiPreset[]>([]);
@@ -45,11 +46,16 @@
 
   onMount(load);
 
+  /// 根据 base_url 匹配预设 ID（不依赖 protocol）
   function matchPresetId(p: AiProfile): string {
-    const hit = presets.find((x) => x.base_url === p.base_url && x.protocol === p.protocol);
+    const hit = presets.find((x) =>
+      x.openai_base_url === p.base_url ||
+      (x.anthropic_base_url && x.anthropic_base_url === p.base_url)
+    );
     return hit?.id ?? "custom";
   }
 
+  /// 应用预设：根据当前协议选对应端点
   function applyPreset(presetId: string) {
     if (!editing || presetId === "custom") {
       selectedPresetId = presetId;
@@ -58,22 +64,47 @@
     const p = presets.find((x) => x.id === presetId);
     if (!p) return;
     selectedPresetId = presetId;
-    editing.protocol = p.protocol;
-    editing.base_url = p.base_url;
-    editing.model = p.default_model;
-    endpointNote = `已应用预设「${p.name}」`;
+    // 根据当前协议选端点
+    if (editing.protocol === "anthropic" && p.supports_anthropic) {
+      editing.base_url = p.anthropic_base_url;
+      editing.model = p.anthropic_default_model;
+    } else {
+      editing.protocol = "openai";
+      editing.base_url = p.openai_base_url;
+      editing.model = p.openai_default_model;
+    }
+    endpointNote = `已应用「${p.name}」端点`;
     testOk = false;
     testMsg = "";
   }
 
+  /// 切换协议：保持提供商不变，只切换端点
   async function onProtocolChange(next: AiProtocol) {
     if (!editing) return;
-    const suggestion = await api.suggestAiEndpoint(next, editing.base_url);
-    editing.protocol = suggestion.protocol;
-    editing.base_url = suggestion.base_url;
-    editing.model = suggestion.default_model;
-    endpointNote = suggestion.note;
-    selectedPresetId = matchPresetId(editing);
+    const preset = presets.find((x) => x.id === selectedPresetId);
+    if (preset) {
+      // 有预设：从预设取对应协议端点
+      if (next === "anthropic" && preset.supports_anthropic) {
+        editing.base_url = preset.anthropic_base_url;
+        editing.model = preset.anthropic_default_model;
+        endpointNote = `已切换为「${preset.name}」Anthropic 端点`;
+      } else if (next === "openai") {
+        editing.base_url = preset.openai_base_url;
+        editing.model = preset.openai_default_model;
+        endpointNote = `已切换为「${preset.name}」OpenAI 端点`;
+      } else {
+        // 预设不支持 Anthropic，保持端点不变但提示
+        endpointNote = `「${preset.name}」不支持 Anthropic 协议`;
+        return;
+      }
+    } else {
+      // 自定义：调后端 suggest_endpoint 自动匹配
+      const suggestion = await api.suggestAiEndpoint(next, editing.base_url);
+      editing.base_url = suggestion.base_url;
+      editing.model = suggestion.default_model;
+      endpointNote = suggestion.note;
+    }
+    editing.protocol = next;
     testOk = false;
     testMsg = "";
   }
@@ -83,9 +114,9 @@
     editing = {
       id: `p-${Date.now()}`,
       name: "",
-      protocol: p?.protocol ?? "openai",
-      base_url: p?.base_url ?? "https://api.openai.com/v1",
-      model: p?.default_model ?? "gpt-4o-mini",
+      protocol: "openai",
+      base_url: p?.openai_base_url ?? "https://api.openai.com/v1",
+      model: p?.openai_default_model ?? "gpt-4o-mini",
       temperature: 0.7,
       max_tokens: 2048,
       key_configured: false
@@ -118,11 +149,7 @@
     errMsg = null;
     try {
       if (newKey.trim()) {
-        modelOptions = await api.fetchAiModelsPreview(
-          editing.protocol,
-          editing.base_url,
-          newKey.trim()
-        );
+        modelOptions = await api.fetchAiModelsPreview(editing.protocol, editing.base_url, newKey.trim());
       } else if (editing.key_configured) {
         modelOptions = await api.fetchAiModels(editing.id);
       } else {
@@ -196,6 +223,8 @@
       showDialog = false;
       successMsg = "已保存配置";
       await load();
+      // 通知 AI 助手面板刷新
+      window.dispatchEvent(new CustomEvent("ai-config-changed"));
     } catch (e) {
       errMsg = String(e);
     }
@@ -206,6 +235,7 @@
     try {
       await api.deleteAiProfile(id);
       await load();
+      window.dispatchEvent(new CustomEvent("ai-config-changed"));
     } catch (e) {
       errMsg = String(e);
     }
@@ -215,6 +245,7 @@
     try {
       await api.setDefaultAiProfile(id);
       defaultId = id;
+      window.dispatchEvent(new CustomEvent("ai-config-changed"));
     } catch (e) {
       errMsg = String(e);
     }
@@ -251,7 +282,7 @@
               {#if defaultId === p.id}<span class="text-xs text-cyan-400 ml-2">默认</span>{/if}
             </div>
             <div class="text-xs text-slate-400 mt-0.5">
-              {p.protocol} · {p.model} · {p.key_configured ? "Key 已配置" : "Key 未配置"}
+              {p.protocol === "openai" ? "OpenAI 兼容" : "Anthropic"} · {p.model} · {p.key_configured ? "Key 已配置" : "Key 未配置"}
             </div>
           </div>
           <div class="flex gap-2 shrink-0">
@@ -298,7 +329,9 @@
             value={editing.protocol}
             onchange={(e) => onProtocolChange((e.currentTarget as HTMLSelectElement).value as AiProtocol)}>
             <option value="openai">OpenAI 兼容</option>
-            <option value="anthropic">Anthropic</option>
+            <option value="anthropic" disabled={selectedPresetId !== "custom" && !presets.find((p) => p.id === selectedPresetId)?.supports_anthropic}>
+              Anthropic {selectedPresetId !== "custom" && !presets.find((p) => p.id === selectedPresetId)?.supports_anthropic ? "（该提供商不支持）" : ""}
+            </option>
           </select>
         </label>
         <label class="block">
