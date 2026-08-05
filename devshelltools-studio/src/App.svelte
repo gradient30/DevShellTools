@@ -246,16 +246,8 @@
   }
 
   async function handleInstallToggle() {
-    if (!$workspace?.initialized) {
-      errorMsg.set("请先初始化工作区");
-      return;
-    }
     if (installStatus?.installed) {
-      if (
-        !confirm(
-          "软卸载将移除 Profile 中的 Import-Module，并删除 PS7 模块副本。\nPS5.1 工作区（Studio 编辑目录）会保留。确认？"
-        )
-      ) {
+      if (!confirm("确认卸载？将移除 Profile 中的 Import-Module 和模块副本。")) {
         return;
       }
       installBusy = true;
