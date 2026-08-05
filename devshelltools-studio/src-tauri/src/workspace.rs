@@ -163,7 +163,7 @@ pub fn read_file(rel: &str) -> DstResult<String> {
     Ok(strip_utf8_bom(std::fs::read_to_string(path)?))
 }
 
-/// 写工作区某文件全文（不 git 提交，调用方负责快照）。
+/// 写工作区某文件全文。
 pub fn write_file(rel: &str, content: &str) -> DstResult<()> {
     let path = workspace_root().join(rel);
     if let Some(parent) = path.parent() {
@@ -173,7 +173,7 @@ pub fn write_file(rel: &str, content: &str) -> DstResult<()> {
     Ok(())
 }
 
-/// 删除工作区某文件（不 git 提交）。
+/// 删除工作区某文件。
 pub fn delete_file(rel: &str) -> DstResult<()> {
     let path = workspace_root().join(rel);
     if !path.exists() {

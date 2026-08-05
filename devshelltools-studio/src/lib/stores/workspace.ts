@@ -30,7 +30,7 @@ export async function init() {
   const unlisten = await api.onInitProgress((p) => initProgress.set(p));
   try {
     await api.initWorkspace();
-    successMsg.set("工作区初始化成功，已创建首次 git 提交。");
+    successMsg.set("工作区初始化成功。");
     await refresh();
   } catch (e) {
     errorMsg.set(String(e));

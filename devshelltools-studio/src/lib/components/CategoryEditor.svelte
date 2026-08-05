@@ -21,7 +21,6 @@
 
   let view = $state<"overview" | "source">("overview");
   let draft = $state("");
-  let commitMsg = $state("");
   let syntaxOk = $state<boolean | null>(null);
   let syntaxErr = $state<string | null>(null);
   let safetyReport = $state<SafetyReport | null>(null);
@@ -44,7 +43,6 @@
     if (dirty && !confirm("有未保存的修改，确认放弃？")) return;
     view = "overview";
     draft = "";
-    commitMsg = "";
     dirty = false;
   }
 
@@ -63,10 +61,7 @@
   }
 
   function save() {
-    if (!commitMsg.trim()) {
-      commitMsg = `更新 ${category?.file_name ?? ""}`;
-    }
-    onSave(draft, commitMsg);
+    onSave(draft, `更新 ${category?.file_name ?? ""}`);
     view = "overview";
     dirty = false;
   }
@@ -134,15 +129,6 @@
         {/if}
       </div>
     {/if}
-
-    <!-- 提交说明 -->
-    <div class="px-4 py-2 border-b border-slate-700">
-      <input
-        type="text"
-        bind:value={commitMsg}
-        placeholder="提交说明（可选，默认&quot;更新 文件名&quot;）"
-        class="w-full px-3 py-1 text-xs bg-slate-800 border border-slate-700 rounded text-slate-300 placeholder-slate-600 focus:border-cyan-600 focus:outline-none" />
-    </div>
 
     <!-- 代码编辑区：行号 + textarea -->
     <div class="flex-1 overflow-auto bg-slate-950">
