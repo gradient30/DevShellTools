@@ -28,6 +28,15 @@
   let expandedBlocks = $state<Set<string>>(new Set());
   let lastAutoToken = $state(0);
   let profilesReady = $state(false);
+  /** 编辑/回退进入发送框时的会话快照，用于「取消」恢复 */
+  let draftSnapshot = $state<{
+    messages: ChatMessage[];
+    replyCodeBlocks: Record<number, ValidatedCodeBlock[]>;
+    targetFiles: Record<string, string>;
+    expandedBlocks: string[];
+    input: string;
+  } | null>(null);
+  let draftMode = $state<"edit" | "rewind" | null>(null);
 
   /** 加载配置列表，并始终对齐设置页的默认 Profile */
   async function loadProfiles(syncDefault = true) {
@@ -77,6 +86,7 @@
       replyCodeBlocks = {};
       targetFiles = {};
       expandedBlocks = new Set();
+      clearDraftState();
       void sendPrompt(initialPrompt.trim());
       return;
     }
@@ -90,6 +100,7 @@
     const userMsg: ChatMessage = { role: "user", content: text };
     messages = [...messages, userMsg];
     input = "";
+    clearDraftState();
     loading = true;
     errMsg = null;
     try {
@@ -106,6 +117,8 @@
             targetFiles[`${assistantIdx}-${bi}`] = categories[0]?.file_name ?? "";
           }
         });
+        // 同命令迭代：收起旧稿，仅展开有变更的最新脚本框
+        focusLatestBlocks(assistantIdx, result.code_blocks);
       }
     } catch (e) {
       errMsg = String(e);
@@ -145,17 +158,149 @@
     return block.syntax_ok && block.safety_ok && block.functions.length > 0;
   }
 
-  function rewindTo(index: number) {
-    messages = messages.slice(0, index);
-    Object.keys(replyCodeBlocks).forEach((k) => {
-      if (parseInt(k) >= index) delete replyCodeBlocks[parseInt(k)];
-    });
-    replyCodeBlocks = { ...replyCodeBlocks };
+  /** 用函数名标识「同一脚本」；无函数名则各块独立（不同匿名脚本都展示） */
+  function scriptIdentity(block: ValidatedCodeBlock): string | null {
+    if (block.functions.length === 0) return null;
+    return [...block.functions].map((f) => f.toLowerCase()).sort().join(",");
   }
 
-  function editUserMessage(index: number, content: string) {
-    rewindTo(index);
+  function normalizeCode(code: string): string {
+    return code.replace(/\r\n/g, "\n").trim();
+  }
+
+  /** 各脚本身份 → 对话中最新代码块 key（msgIdx-blockIdx） */
+  let latestKeyByScript = $derived.by(() => {
+    const map = new Map<string, string>();
+    const idxs = Object.keys(replyCodeBlocks)
+      .map((k) => parseInt(k, 10))
+      .filter((n) => !Number.isNaN(n))
+      .sort((a, b) => a - b);
+    for (const i of idxs) {
+      const blocks = replyCodeBlocks[i] ?? [];
+      blocks.forEach((block, bi) => {
+        const id = scriptIdentity(block);
+        if (id) map.set(id, `${i}-${bi}`);
+      });
+    }
+    return map;
+  });
+
+  function isLatestScriptBlock(block: ValidatedCodeBlock, key: string): boolean {
+    const id = scriptIdentity(block);
+    if (!id) return true;
+    return latestKeyByScript.get(id) === key;
+  }
+
+  function findEarlierBlock(
+    identity: string,
+    beforeMsgIdx: number,
+    beforeBlockIdx = Infinity
+  ): ValidatedCodeBlock | null {
+    for (let i = beforeMsgIdx; i >= 0; i--) {
+      const blocks = replyCodeBlocks[i];
+      if (!blocks) continue;
+      const maxBi = i === beforeMsgIdx ? Math.min(beforeBlockIdx, blocks.length) - 1 : blocks.length - 1;
+      for (let bi = maxBi; bi >= 0; bi--) {
+        if (scriptIdentity(blocks[bi]) === identity) return blocks[bi];
+      }
+    }
+    return null;
+  }
+
+  function isUnchangedFromPrevious(
+    block: ValidatedCodeBlock,
+    msgIdx: number,
+    blockIdx: number
+  ): boolean {
+    const id = scriptIdentity(block);
+    if (!id) return false;
+    const earlier = findEarlierBlock(id, msgIdx, blockIdx);
+    if (!earlier) return false;
+    return normalizeCode(earlier.code) === normalizeCode(block.code);
+  }
+
+  function focusLatestBlocks(msgIdx: number, blocks: ValidatedCodeBlock[]) {
+    const next = new Set(expandedBlocks);
+    blocks.forEach((block, bi) => {
+      const id = scriptIdentity(block);
+      const key = `${msgIdx}-${bi}`;
+      if (!id) {
+        next.add(key);
+        return;
+      }
+      for (const [iStr, list] of Object.entries(replyCodeBlocks)) {
+        list.forEach((b, bix) => {
+          const k = `${iStr}-${bix}`;
+          if (k !== key && scriptIdentity(b) === id) next.delete(k);
+        });
+      }
+      if (isUnchangedFromPrevious(block, msgIdx, bi)) next.delete(key);
+      else next.add(key);
+    });
+    expandedBlocks = next;
+  }
+
+  function captureSnapshot() {
+    return {
+      messages: messages.map((m) => ({ ...m })),
+      replyCodeBlocks: structuredClone(replyCodeBlocks),
+      targetFiles: { ...targetFiles },
+      expandedBlocks: [...expandedBlocks],
+      input
+    };
+  }
+
+  function truncateFrom(index: number) {
+    messages = messages.slice(0, index);
+    Object.keys(replyCodeBlocks).forEach((k) => {
+      if (parseInt(k, 10) >= index) delete replyCodeBlocks[parseInt(k, 10)];
+    });
+    replyCodeBlocks = { ...replyCodeBlocks };
+    Object.keys(targetFiles).forEach((k) => {
+      const msgIdx = parseInt(k.split("-")[0] ?? "", 10);
+      if (!Number.isNaN(msgIdx) && msgIdx >= index) delete targetFiles[k];
+    });
+    targetFiles = { ...targetFiles };
+    expandedBlocks = new Set([...expandedBlocks].filter((k) => {
+      const msgIdx = parseInt(k.split("-")[0] ?? "", 10);
+      return Number.isNaN(msgIdx) || msgIdx < index;
+    }));
+  }
+
+  /** 回退：截断该条及之后，内容进入发送框，可取消恢复 */
+  function rewindTo(index: number, content: string) {
+    if (!draftSnapshot) draftSnapshot = captureSnapshot();
+    draftMode = "rewind";
+    truncateFrom(index);
     input = content;
+  }
+
+  /** 编辑：同回退，语义上强调改写后重发 */
+  function editUserMessage(index: number, content: string) {
+    if (!draftSnapshot) draftSnapshot = captureSnapshot();
+    draftMode = "edit";
+    truncateFrom(index);
+    input = content;
+  }
+
+  function cancelDraft() {
+    if (!draftSnapshot) {
+      draftMode = null;
+      input = "";
+      return;
+    }
+    messages = draftSnapshot.messages;
+    replyCodeBlocks = draftSnapshot.replyCodeBlocks;
+    targetFiles = draftSnapshot.targetFiles;
+    expandedBlocks = new Set(draftSnapshot.expandedBlocks);
+    input = draftSnapshot.input;
+    draftSnapshot = null;
+    draftMode = null;
+  }
+
+  function clearDraftState() {
+    draftSnapshot = null;
+    draftMode = null;
   }
 
   function textWithoutCode(text: string): string {
@@ -201,8 +346,14 @@
               {m.content}
             </div>
             <div class="flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
-              <button class="text-xs text-slate-500 hover:text-cyan-300" onclick={() => editUserMessage(i, m.content)}>编辑</button>
-              <button class="text-xs text-slate-500 hover:text-red-300" onclick={() => rewindTo(i)}>回退到此</button>
+              <button
+                class="text-xs text-slate-500 hover:text-cyan-300 disabled:opacity-40"
+                disabled={loading}
+                onclick={() => editUserMessage(i, m.content)}>编辑</button>
+              <button
+                class="text-xs text-slate-500 hover:text-amber-300 disabled:opacity-40"
+                disabled={loading}
+                onclick={() => rewindTo(i, m.content)}>回退到此</button>
             </div>
           </div>
           <div class="w-8 h-8 rounded-full bg-cyan-800/60 border border-cyan-700 flex items-center justify-center text-sm shrink-0">👤</div>
@@ -219,43 +370,84 @@
             {#if replyCodeBlocks[i]}
               {#each replyCodeBlocks[i] as block, bi}
                 {@const key = `${i}-${bi}`}
-                <div class="border border-slate-700 rounded-lg overflow-hidden">
-                  <div
-                    class="flex items-center justify-between px-3 py-1.5 bg-slate-800/80 cursor-pointer hover:bg-slate-700/60"
-                    role="button"
-                    tabindex="0"
-                    onclick={() => toggleBlock(key)}
-                    onkeydown={(e) => e.key === "Enter" && toggleBlock(key)}>
-                    <div class="flex items-center gap-2 text-xs">
-                      <span class="text-slate-400 font-mono">{expandedBlocks.has(key) ? "▾" : "▸"}</span>
-                      <span class="text-cyan-300 font-mono">{block.functions.join(", ") || "代码块"}</span>
-                      <span class="text-slate-500">{block.syntax_ok ? "语法✓" : "语法✗"} · {block.safety_ok ? "安全✓" : "安全✗"}</span>
+                {@const latest = isLatestScriptBlock(block, key)}
+                {@const unchanged = latest && isUnchangedFromPrevious(block, i, bi)}
+                {@const title = block.functions.join(", ") || "代码块"}
+                {#if !latest}
+                  <!-- 同命令旧稿：折叠为一行，避免多次优化堆叠编辑框 -->
+                  <div class="border border-slate-800/80 rounded-lg overflow-hidden opacity-70">
+                    <div class="flex items-center justify-between px-3 py-1.5 bg-slate-900/50 gap-2">
+                      <div class="flex items-center gap-2 text-xs min-w-0">
+                        <span class="text-cyan-300/70 font-mono truncate">{title}</span>
+                        <span class="text-slate-500 shrink-0">已有更新版本</span>
+                      </div>
+                      <button
+                        type="button"
+                        class="text-xs text-slate-500 hover:text-slate-300 shrink-0"
+                        onclick={() => toggleBlock(key)}>
+                        {expandedBlocks.has(key) ? "收起旧稿" : "查看旧稿"}
+                      </button>
                     </div>
+                    {#if expandedBlocks.has(key)}
+                      <pre class="px-3 py-2 text-xs text-slate-500 overflow-x-auto whitespace-pre-wrap font-mono bg-slate-950/40 border-t border-slate-800">{block.code}</pre>
+                    {/if}
+                  </div>
+                {:else if unchanged}
+                  <div class="border border-slate-800 rounded-lg px-3 py-1.5 flex items-center justify-between gap-2 bg-slate-900/40">
+                    <div class="flex items-center gap-2 text-xs min-w-0">
+                      <span class="text-cyan-300 font-mono truncate">{title}</span>
+                      <span class="text-slate-500">与上一版相同 · {block.syntax_ok ? "语法✓" : "语法✗"} · {block.safety_ok ? "安全✓" : "安全✗"}</span>
+                    </div>
+                    <button
+                      type="button"
+                      class="text-xs text-slate-500 hover:text-slate-300 shrink-0"
+                      onclick={() => toggleBlock(key)}>
+                      {expandedBlocks.has(key) ? "收起" : "查看"}
+                    </button>
                   </div>
                   {#if expandedBlocks.has(key)}
-                    <div class="px-3 py-2 bg-slate-950/50 space-y-2">
-                      <pre class="text-xs text-slate-300 overflow-x-auto whitespace-pre-wrap font-mono">{block.code}</pre>
-                      {#if !block.syntax_ok || !block.safety_ok}
-                        <p class="text-xs text-amber-300">
-                          {[block.syntax_err, ...block.safety_violations].filter(Boolean).join("；") || "未通过校验"}
-                        </p>
-                      {/if}
-                      <div class="flex items-center gap-2">
-                        <select bind:value={targetFiles[key]} class="text-xs bg-slate-800 border border-slate-700 rounded px-2 py-1">
-                          {#each categories as c}
-                            <option value={c.file_name}>{c.category.title}</option>
-                          {/each}
-                        </select>
-                        <button
-                          class="px-2 py-1 text-xs bg-emerald-700 hover:bg-emerald-600 rounded disabled:opacity-40"
-                          disabled={!canApply(block) || applying}
-                          onclick={() => apply(block, key)}>
-                          插入到分类
-                        </button>
+                    <pre class="mt-0 border border-t-0 border-slate-800 rounded-b-lg px-3 py-2 text-xs text-slate-400 overflow-x-auto whitespace-pre-wrap font-mono bg-slate-950/40">{block.code}</pre>
+                  {/if}
+                {:else}
+                  <div class="border border-slate-700 rounded-lg overflow-hidden">
+                    <div
+                      class="flex items-center justify-between px-3 py-1.5 bg-slate-800/80 cursor-pointer hover:bg-slate-700/60"
+                      role="button"
+                      tabindex="0"
+                      onclick={() => toggleBlock(key)}
+                      onkeydown={(e) => e.key === "Enter" && toggleBlock(key)}>
+                      <div class="flex items-center gap-2 text-xs">
+                        <span class="text-slate-400 font-mono">{expandedBlocks.has(key) ? "▾" : "▸"}</span>
+                        <span class="text-cyan-300 font-mono">{title}</span>
+                        <span class="text-emerald-500/80">最新</span>
+                        <span class="text-slate-500">{block.syntax_ok ? "语法✓" : "语法✗"} · {block.safety_ok ? "安全✓" : "安全✗"}</span>
                       </div>
                     </div>
-                  {/if}
-                </div>
+                    {#if expandedBlocks.has(key)}
+                      <div class="px-3 py-2 bg-slate-950/50 space-y-2">
+                        <pre class="text-xs text-slate-300 overflow-x-auto whitespace-pre-wrap font-mono">{block.code}</pre>
+                        {#if !block.syntax_ok || !block.safety_ok}
+                          <p class="text-xs text-amber-300">
+                            {[block.syntax_err, ...block.safety_violations].filter(Boolean).join("；") || "未通过校验"}
+                          </p>
+                        {/if}
+                        <div class="flex items-center gap-2">
+                          <select bind:value={targetFiles[key]} class="text-xs bg-slate-800 border border-slate-700 rounded px-2 py-1">
+                            {#each categories as c}
+                              <option value={c.file_name}>{c.category.title}</option>
+                            {/each}
+                          </select>
+                          <button
+                            class="px-2 py-1 text-xs bg-emerald-700 hover:bg-emerald-600 rounded disabled:opacity-40"
+                            disabled={!canApply(block) || applying}
+                            onclick={() => apply(block, key)}>
+                            插入到分类
+                          </button>
+                        </div>
+                      </div>
+                    {/if}
+                  </div>
+                {/if}
               {/each}
             {/if}
           </div>
@@ -276,16 +468,33 @@
     {/if}
   </div>
 
-  <div class="p-3 border-t border-slate-700">
+  <div class="p-3 border-t border-slate-700 space-y-2">
+    {#if draftMode}
+      <p class="text-xs text-amber-300/90 px-1">
+        {draftMode === "edit" ? "正在编辑消息" : "已回退到此条"}，修改后发送将从此处继续
+      </p>
+    {/if}
     <div class="flex gap-2">
       <input
         bind:value={input}
         onkeydown={(e) => e.key === "Enter" && !e.shiftKey && (e.preventDefault(), send())}
-        placeholder="继续追问，或描述新命令…"
-        class="flex-1 px-3 py-2 text-sm bg-slate-800 border border-slate-700 rounded-lg text-slate-200 focus:border-cyan-600 focus:outline-none"
+        placeholder={draftMode ? "编辑后发送，或点取消恢复…" : "继续追问，或描述新命令…"}
+        class="flex-1 px-3 py-2 text-sm bg-slate-800 border rounded-lg text-slate-200 focus:outline-none {draftMode
+          ? 'border-amber-600/70 focus:border-amber-500'
+          : 'border-slate-700 focus:border-cyan-600'}"
         disabled={loading || !profileId} />
+      {#if draftMode}
+        <button
+          type="button"
+          class="px-3 py-2 text-sm bg-slate-700 hover:bg-slate-600 rounded-lg disabled:opacity-50 transition-colors shrink-0"
+          onclick={cancelDraft}
+          disabled={loading}
+          title="恢复编辑/回退前的对话">
+          取消
+        </button>
+      {/if}
       <button
-        class="px-4 py-2 text-sm bg-cyan-600 hover:bg-cyan-500 rounded-lg disabled:opacity-50 transition-colors"
+        class="px-4 py-2 text-sm bg-cyan-600 hover:bg-cyan-500 rounded-lg disabled:opacity-50 transition-colors shrink-0"
         onclick={send}
         disabled={loading || !input.trim() || !profileId}>
         发送
