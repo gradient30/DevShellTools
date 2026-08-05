@@ -11,8 +11,7 @@ mod tests {
         if !workspace::is_initialized() {
             workspace::init_from_template().expect("init");
             let root = workspace::workspace_root();
-            devshelltools_studio_lib::git::init_repo(&root).expect("git");
-        }
+                    }
     }
 
     #[test]

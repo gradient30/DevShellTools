@@ -284,16 +284,6 @@
       <p class="text-xs text-slate-500">模板 v1.0.5 · M6</p>
     </div>
     <nav class="flex gap-1 items-center">
-      {#if $workspace?.initialized}
-        <button
-          class="px-3 py-1 text-xs rounded disabled:opacity-50 {installStatus?.installed
-            ? 'bg-amber-700 hover:bg-amber-600 text-white'
-            : 'bg-emerald-700 hover:bg-emerald-600 text-white'}"
-          onclick={handleInstallToggle}
-          disabled={installBusy}>
-          {installBusy ? "处理中…" : installStatus?.installed ? "卸载" : "安装"}
-        </button>
-      {/if}
       <button
         class="px-3 py-1 text-xs rounded {tab === 'manage' ? 'bg-cyan-600 text-white' : 'bg-slate-700 text-slate-300 hover:bg-slate-600'}"
         onclick={() => (tab = "manage")}>管理</button
@@ -310,6 +300,17 @@
         class="px-3 py-1 text-xs rounded {tab === 'settings' ? 'bg-cyan-600 text-white' : 'bg-slate-700 text-slate-300 hover:bg-slate-600'}"
         onclick={() => (tab = "settings")}>设置</button
       >
+      {#if $workspace?.initialized || installStatus?.installed}
+        <span class="w-px h-5 bg-slate-700 mx-1"></span>
+        <button
+          class="px-3 py-1 text-xs rounded disabled:opacity-50 {installStatus?.installed
+            ? 'bg-amber-700 hover:bg-amber-600 text-white'
+            : 'bg-emerald-700 hover:bg-emerald-600 text-white'}"
+          onclick={handleInstallToggle}
+          disabled={installBusy}>
+          {installBusy ? "处理中…" : installStatus?.installed ? "卸载" : "安装"}
+        </button>
+      {/if}
     </nav>
   </header>
 

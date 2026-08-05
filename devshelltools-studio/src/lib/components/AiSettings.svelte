@@ -19,6 +19,7 @@
   let testMsg = $state("");
   let endpointNote = $state("");
   let testingProfile = $state<string | null>(null);
+  let profileTestResult = $state<Record<string, { ok: boolean; msg: string }>>({});
 
   let fetchingModels = $state(false);
   let modelOptions = $state<string[]>([]);
@@ -195,11 +196,15 @@
 
   async function testProfile(id: string) {
     testingProfile = id;
+    profileTestResult[id] = { ok: false, msg: "测试中…" };
     try {
       const reply = await api.testAiProfile(id);
+      profileTestResult[id] = { ok: true, msg: reply.slice(0, 80) };
       showToast(`测试通过：${reply.slice(0, 80)}`, "success", 4000);
     } catch (e) {
-      showToast(`测试失败：${String(e).slice(0, 120)}`, "error", 5000);
+      const msg = String(e).slice(0, 120);
+      profileTestResult[id] = { ok: false, msg };
+      showToast(`测试失败：${msg}`, "error", 5000);
     } finally {
       testingProfile = null;
     }
@@ -292,6 +297,11 @@
             <button class="text-xs text-emerald-400 hover:text-emerald-200" onclick={() => testProfile(p.id)} disabled={testingProfile === p.id}>
               {testingProfile === p.id ? "测试中…" : "测试"}
             </button>
+            {#if profileTestResult[p.id]}
+              <span class="text-xs {profileTestResult[p.id].ok ? 'text-green-400' : 'text-red-400'} ml-1 max-w-40 truncate" title={profileTestResult[p.id].msg}>
+                {profileTestResult[p.id].ok ? "✓" : "✗"} {profileTestResult[p.id].msg}
+              </span>
+            {/if}
             <button class="text-xs text-cyan-400 hover:text-cyan-200" onclick={() => openEdit(p)}>编辑</button>
             <button class="text-xs text-red-400 hover:text-red-300" onclick={() => remove(p.id)}>删除</button>
           </div>

@@ -61,31 +61,39 @@ pub fn install_status() -> InstallStatus {
     InstallStatus { workspace_ready, ps51_module_present, ps7_module_present, profile_configured, installed }
 }
 
-/// 安装：直接执行工作区的 install.ps1，秒速完成。
-/// 如果工作区没有 install.ps1，用内嵌模板的 install.ps1 写临时文件执行。
-pub fn install_module() -> DstResult<InstallResult> {
+/// 确保工作区有 install.ps1，没有则从内嵌模板写入完整工作区。
+fn ensure_install_script() -> DstResult<PathBuf> {
     let ws = workspace::workspace_root();
     let install_ps1 = ws.join("install.ps1");
+    if install_ps1.exists() {
+        return Ok(install_ps1);
+    }
+    // 工作区无 install.ps1 → 从内嵌模板写一份到工作区
+    std::fs::write(&install_ps1, crate::template::INSTALL_PS1)
+        .map_err(|e| DstError::Other(format!("写入 install.ps1 到工作区失败：{e}")))?;
+    Ok(install_ps1)
+}
 
-    // 工作区无 install.ps1 → 用内嵌模板写临时文件
-    let (script_path, is_temp) = if install_ps1.exists() {
-        (install_ps1, false)
-    } else {
-        let tmp = std::env::temp_dir().join("dst-install.ps1");
-        std::fs::write(&tmp, crate::template::INSTALL_PS1)
-            .map_err(|e| DstError::Other(format!("写临时 install.ps1 失败：{e}")))?;
-        (tmp, true)
-    };
+fn ensure_uninstall_script() -> DstResult<PathBuf> {
+    let ws = workspace::workspace_root();
+    let uninstall_ps1 = ws.join("uninstall.ps1");
+    if uninstall_ps1.exists() {
+        return Ok(uninstall_ps1);
+    }
+    std::fs::write(&uninstall_ps1, crate::template::UNINSTALL_PS1)
+        .map_err(|e| DstError::Other(format!("写入 uninstall.ps1 到工作区失败：{e}")))?;
+    Ok(uninstall_ps1)
+}
 
+/// 安装：执行工作区的 install.ps1（$PSScriptRoot 指向工作区，不会误复制 temp 文件）。
+pub fn install_module() -> DstResult<InstallResult> {
+    let install_ps1 = ensure_install_script()?;
     let exe = "powershell";
     let mut cmd = Command::new(exe);
     for arg in ps_base_args(exe) { cmd.arg(arg); }
-    cmd.arg("-File").arg(&script_path);
+    cmd.arg("-File").arg(&install_ps1);
     let output = output_hidden(cmd)
         .map_err(|e| DstError::Other(format!("启动 install.ps1 失败：{e}")))?;
-
-    if is_temp { std::fs::remove_file(&script_path).ok(); }
-
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         return Err(DstError::Other(format!("install.ps1 执行失败：{}", stderr.trim())));
@@ -100,25 +108,15 @@ pub fn install_module() -> DstResult<InstallResult> {
     Ok(InstallResult { status, message, verified })
 }
 
-/// 卸载：直接执行工作区的 uninstall.ps1，无则用内嵌模板。
+/// 卸载：执行工作区的 uninstall.ps1。
 pub fn uninstall_module() -> DstResult<InstallResult> {
-    let ws = workspace::workspace_root();
-    let uninstall_ps1 = ws.join("uninstall.ps1");
-    let (script_path, is_temp) = if uninstall_ps1.exists() {
-        (uninstall_ps1, false)
-    } else {
-        let tmp = std::env::temp_dir().join("dst-uninstall.ps1");
-        std::fs::write(&tmp, crate::template::UNINSTALL_PS1)
-            .map_err(|e| DstError::Other(format!("写临时 uninstall.ps1 失败：{e}")))?;
-        (tmp, true)
-    };
+    let uninstall_ps1 = ensure_uninstall_script()?;
     let exe = "powershell";
     let mut cmd = Command::new(exe);
     for arg in ps_base_args(exe) { cmd.arg(arg); }
-    cmd.arg("-File").arg(&script_path);
+    cmd.arg("-File").arg(&uninstall_ps1);
     let output = output_hidden(cmd)
         .map_err(|e| DstError::Other(format!("启动 uninstall.ps1 失败：{e}")))?;
-    if is_temp { std::fs::remove_file(&script_path).ok(); }
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         return Err(DstError::Other(format!("uninstall.ps1 执行失败：{}", stderr.trim())));
@@ -126,62 +124,4 @@ pub fn uninstall_module() -> DstResult<InstallResult> {
     let status = install_status();
     let verified = !status.installed;
     Ok(InstallResult { status, message: "卸载完成。新开 PowerShell 窗口生效。".into(), verified })
-}
-
-// ============ 回退方案 ============
-
-fn copy_dir_all(src: &Path, dst: &Path) -> std::io::Result<()> {
-    std::fs::create_dir_all(dst)?;
-    for entry in std::fs::read_dir(src)? {
-        let entry = entry?;
-        let name = entry.file_name();
-        if name == ".git" || name == ".studio" || name == "install.ps1" || name == "uninstall.ps1" || name == "README.md" { continue; }
-        let from = entry.path();
-        let to = dst.join(name);
-        if from.is_dir() { copy_dir_all(&from, &to)?; } else { std::fs::copy(&from, &to)?; }
-    }
-    Ok(())
-}
-
-fn ensure_profile_import(path: &Path) -> DstResult<()> {
-    if let Some(parent) = path.parent() { std::fs::create_dir_all(parent)?; }
-    if !path.exists() { std::fs::write(path, "")?; }
-    if profile_has_import(path) { return Ok(()); }
-    let content = std::fs::read_to_string(path).unwrap_or_default();
-    let mut lines = content;
-    if !lines.ends_with('\n') && !lines.is_empty() { lines.push('\n'); }
-    lines.push_str("\n# DevShellTools\nImport-Module DevShellTools -Force -ErrorAction SilentlyContinue\n");
-    std::fs::write(path, lines)?;
-    Ok(())
-}
-
-fn install_via_copy() -> DstResult<InstallResult> {
-    let src = workspace::workspace_root();
-    for target in [ps51_module_dir(), ps7_module_dir()] {
-        if target.exists() && target != src { std::fs::remove_dir_all(&target).ok(); }
-        copy_dir_all(&src, &target).map_err(|e| DstError::Other(format!("复制失败：{e}")))?;
-    }
-    for p in profile_paths() { ensure_profile_import(&p)?; }
-    let status = install_status();
-    let verified = status.installed;
-    Ok(InstallResult { status, message: "安装完成。".into(), verified })
-}
-
-fn uninstall_via_remove() -> DstResult<InstallResult> {
-    for p in profile_paths() {
-        if p.exists() {
-            let content = std::fs::read_to_string(&p).unwrap_or_default();
-            let filtered: Vec<&str> = content.lines()
-                .filter(|l| !l.trim().eq("# DevShellTools") && !l.trim().starts_with("Import-Module DevShellTools"))
-                .collect();
-            std::fs::write(&p, filtered.join("\n"))?;
-        }
-    }
-    let src = workspace::workspace_root();
-    for target in [ps51_module_dir(), ps7_module_dir()] {
-        if target.exists() && target != src { std::fs::remove_dir_all(&target).ok(); }
-    }
-    let status = install_status();
-    let verified = !status.installed;
-    Ok(InstallResult { status, message: "卸载完成。".into(), verified })
 }

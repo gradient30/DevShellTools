@@ -18,12 +18,6 @@ export interface InitProgress {
   percent: number;
 }
 
-export interface CommitInfo {
-  oid: string;
-  message: string;
-  time: number;
-}
-
 export interface PsFunction {
   name: string;
   synopsis: string;

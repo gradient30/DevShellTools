@@ -25,13 +25,11 @@ mod tests {
         // 初始化工作区
         devshelltools_studio_lib::workspace::init_from_template().expect("init");
         let root = devshelltools_studio_lib::workspace::workspace_root();
-        devshelltools_studio_lib::git::init_repo(&root).expect("git init");
-
+        
         // 创建测试文件
         devshelltools_studio_lib::workspace::write_file("Public/TestExport.ps1", "# test export\n")
             .unwrap();
-        devshelltools_studio_lib::git::snapshot(&root, "test: add export file").unwrap();
-
+        
         // 导出到系统 temp（不在 USERPROFILE 隔离目录内，便于跨 profile 导入测试）
         let export_dir = std::env::temp_dir().join(format!(
             "dst-export-target-{}-{}",
@@ -42,7 +40,7 @@ mod tests {
                 .as_nanos()
         ));
         let _ = std::fs::remove_dir_all(&export_dir);
-        export::export_to(export_dir.to_str().unwrap()).expect("export");
+        export::export_scripts(export_dir.to_str().unwrap()).expect("export");
         assert!(
             export_dir.join("DevShellTools.psd1").exists(),
             "导出应含 psd1"
@@ -59,9 +57,8 @@ mod tests {
         let root2 = devshelltools_studio_lib::workspace::workspace_root();
         // 初始化新工作区
         devshelltools_studio_lib::workspace::init_from_template().expect("init2");
-        devshelltools_studio_lib::git::init_repo(&root2).expect("git init2");
-
-        let files = export::import_from(export_dir.to_str().unwrap()).expect("import");
+        
+        let files = export::import_scripts(export_dir.to_str().unwrap()).expect("import");
         assert!(!files.is_empty(), "应导入文件");
         assert!(
             root2.join("Public").join("TestExport.ps1").exists(),
@@ -103,8 +100,7 @@ mod tests {
         let _g = IsolatedProfile::new("m4-exclude");
         devshelltools_studio_lib::workspace::init_from_template().expect("init");
         let root = devshelltools_studio_lib::workspace::workspace_root();
-        devshelltools_studio_lib::git::init_repo(&root).expect("git init");
-
+        
         let export_dir = std::env::temp_dir().join(format!(
             "dst-export-exclude-{}-{}",
             std::process::id(),
@@ -114,7 +110,7 @@ mod tests {
                 .as_nanos()
         ));
         let _ = std::fs::remove_dir_all(&export_dir);
-        export::export_to(export_dir.to_str().unwrap()).expect("export");
+        export::export_scripts(export_dir.to_str().unwrap()).expect("export");
         assert!(!export_dir.join(".studio").exists(), "导出应排除 .studio");
         assert!(!export_dir.join(".git").exists(), "导出应排除 .git");
         let _ = std::fs::remove_dir_all(&export_dir);

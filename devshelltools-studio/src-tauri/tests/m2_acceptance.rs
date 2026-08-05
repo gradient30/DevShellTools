@@ -6,8 +6,7 @@ mod common;
 mod tests {
     use crate::common::IsolatedProfile;
     use devshelltools_studio_lib::consistency;
-    use devshelltools_studio_lib::git;
-    use devshelltools_studio_lib::ps_parser;
+        use devshelltools_studio_lib::ps_parser;
     use devshelltools_studio_lib::safety;
     use devshelltools_studio_lib::sync;
     use devshelltools_studio_lib::workspace;
@@ -16,8 +15,7 @@ mod tests {
         if !workspace::is_initialized() {
             workspace::init_from_template().expect("init_from_template");
             let root = workspace::workspace_root();
-            git::init_repo(&root).expect("git init");
-        }
+                    }
     }
 
     #[test]
@@ -85,8 +83,7 @@ dps
         sync::regenerate_all().expect("regenerate");
         // git 快照
         let root = workspace::workspace_root();
-        let _oid = git::snapshot(&root, "test: 新建 docker 分类").expect("snapshot");
-
+        
         // 校验：现在应有 6 个分类
         let cats = sync::scan_categories().expect("scan");
         assert_eq!(cats.len(), 6, "新建后应有 6 个分类");
@@ -113,8 +110,7 @@ dps
         // 清理：删除 docker 分类
         workspace::delete_file("Public/Docker.ps1").expect("delete");
         sync::regenerate_all().expect("regenerate after delete");
-        let _oid2 = git::snapshot(&root, "test: 删除 docker 分类").expect("snapshot");
-
+        
         let cats2 = sync::scan_categories().expect("scan after delete");
         assert_eq!(cats2.len(), 5, "删除后应回到 5 个分类");
         let report2 = consistency::check().expect("consistency after delete");
