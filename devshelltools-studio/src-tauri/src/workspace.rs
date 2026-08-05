@@ -67,11 +67,79 @@ pub struct WorkspaceMeta {
     pub last_sync: String,
 }
 
-/// 工作区是否已初始化（核心文件齐全）。
+/// 软卸载后禁用的模块文件名（避免 PS 命令发现自动加载）。
+pub const PSD1_DISABLED_NAME: &str = "DevShellTools.psd1.dst-disabled";
+pub const PSM1_DISABLED_NAME: &str = "DevShellTools.psm1.dst-disabled";
+
+fn has_named_or_disabled(active: &str, disabled: &str) -> bool {
+    let root = workspace_root();
+    root.join(active).exists() || root.join(disabled).exists()
+}
+
+/// 工作区是否存在可用或已禁用的模块清单。
+pub fn has_module_manifest() -> bool {
+    has_named_or_disabled("DevShellTools.psd1", PSD1_DISABLED_NAME)
+}
+
+fn has_module_loader() -> bool {
+    has_named_or_disabled("DevShellTools.psm1", PSM1_DISABLED_NAME)
+}
+
+/// PowerShell 是否可发现/加载该模块（活动 .psd1 与 .psm1 均存在）。
+pub fn is_shell_enabled() -> bool {
+    let root = workspace_root();
+    root.join("DevShellTools.psd1").exists() && root.join("DevShellTools.psm1").exists()
+}
+
+fn read_active_or_disabled(active: &str, disabled: &str) -> DstResult<String> {
+    let root = workspace_root();
+    let active_path = root.join(active);
+    if active_path.exists() {
+        return Ok(strip_utf8_bom(std::fs::read_to_string(active_path)?));
+    }
+    let disabled_path = root.join(disabled);
+    if disabled_path.exists() {
+        return Ok(strip_utf8_bom(std::fs::read_to_string(disabled_path)?));
+    }
+    Err(DstError::FileNotFound(active.into()))
+}
+
+fn write_active_or_disabled(active: &str, disabled: &str, content: &str) -> DstResult<()> {
+    let root = workspace_root();
+    let active_path = root.join(active);
+    let disabled_path = root.join(disabled);
+    let target = if !active_path.exists() && disabled_path.exists() {
+        disabled_path
+    } else {
+        active_path
+    };
+    if let Some(parent) = target.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    std::fs::write(target, content)?;
+    Ok(())
+}
+
+/// 读取模块清单内容（优先活动清单，其次软卸载禁用副本）。
+pub fn read_module_manifest() -> DstResult<String> {
+    read_active_or_disabled("DevShellTools.psd1", PSD1_DISABLED_NAME)
+}
+
+/// 写入模块清单：若当前为软卸载禁用态，则写入禁用文件名，避免误重新启用 shell。
+pub fn write_module_manifest(content: &str) -> DstResult<()> {
+    write_active_or_disabled("DevShellTools.psd1", PSD1_DISABLED_NAME, content)
+}
+
+/// 写入模块加载器：禁用态时写入 .psm1.dst-disabled。
+pub fn write_module_loader(content: &str) -> DstResult<()> {
+    write_active_or_disabled("DevShellTools.psm1", PSM1_DISABLED_NAME, content)
+}
+
+/// 工作区是否已初始化（核心文件齐全；允许清单/加载器处于软卸载禁用态）。
 pub fn is_initialized() -> bool {
     let root = workspace_root();
-    root.join("DevShellTools.psd1").exists()
-        && root.join("DevShellTools.psm1").exists()
+    has_module_manifest()
+        && has_module_loader()
         && root.join("Private").join("Common.ps1").exists()
         && root.join("Public").exists()
         && meta_file().exists()
@@ -80,15 +148,14 @@ pub fn is_initialized() -> bool {
 /// 校验工作区必需文件存在，返回缺失项列表。
 pub fn missing_files() -> Vec<String> {
     let root = workspace_root();
-    let required = [
-        "DevShellTools.psd1",
-        "DevShellTools.psm1",
-        "install.ps1",
-        "uninstall.ps1",
-        "Private/Common.ps1",
-    ];
     let mut missing = vec![];
-    for r in required {
+    if !has_module_manifest() {
+        missing.push("DevShellTools.psd1".into());
+    }
+    if !has_module_loader() {
+        missing.push("DevShellTools.psm1".into());
+    }
+    for r in ["install.ps1", "uninstall.ps1", "Private/Common.ps1"] {
         if !root.join(r).exists() {
             missing.push(r.to_string());
         }

@@ -88,10 +88,48 @@ mod tests {
             "软卸载后工作区应保留（不得删除含 .studio 的 PS5.1 目录）"
         );
         assert!(
+            !workspace::is_shell_enabled(),
+            "软卸载后应禁用活动清单，避免 PS 自动加载"
+        );
+        assert!(
             workspace::workspace_root()
-                .join("DevShellTools.psd1")
+                .join(workspace::PSD1_DISABLED_NAME)
                 .exists(),
-            "软卸载后清单文件应保留"
+            "软卸载后禁用清单应保留"
+        );
+        assert!(
+            workspace::workspace_root()
+                .join(workspace::PSM1_DISABLED_NAME)
+                .exists(),
+            "软卸载后禁用加载器应保留（仅禁 psd1 仍会被 .psm1 自动加载）"
+        );
+        assert!(
+            !after_uninstall.status.ps51_module_present,
+            "软卸载后 install_status 不应再视 PS5.1 模块为已加载可用"
+        );
+
+        // 命令发现不应再解析到 dsh（把隔离 Modules 放进子进程 PSModulePath）
+        let docs = _g.documents_dir();
+        let modules = docs.join("WindowsPowerShell").join("Modules");
+        let output = std::process::Command::new("powershell")
+            .args([
+                "-NoProfile",
+                "-NonInteractive",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-Command",
+                &format!(
+                    // 仅使用隔离 Modules，避免主机真实 Modules 里的历史 backup 污染断言
+                    "$env:PSModulePath = '{}'; if (Get-Command dsh -ErrorAction SilentlyContinue) {{ 'FOUND' }} else {{ 'MISSING' }}",
+                    modules.to_string_lossy().replace('\'', "''")
+                ),
+            ])
+            .output()
+            .expect("spawn powershell");
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(
+            stdout.contains("MISSING"),
+            "软卸载后 Get-Command dsh 应失败，实际输出：{stdout}"
         );
     }
 

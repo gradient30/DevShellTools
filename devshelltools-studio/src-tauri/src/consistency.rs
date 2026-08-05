@@ -49,7 +49,7 @@ pub fn check() -> DstResult<ConsistencyReport> {
     actual_sorted.dedup();
 
     // 2. 解析 .psd1 的 FunctionsToExport
-    let psd1 = workspace::read_file("DevShellTools.psd1")?;
+    let psd1 = workspace::read_module_manifest()?;
     let psd1_exports = extract_ps_string_array(&psd1, "FunctionsToExport");
     let mut psd1_sorted = psd1_exports.clone();
     psd1_sorted.sort();

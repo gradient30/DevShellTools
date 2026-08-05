@@ -197,8 +197,8 @@ pub fn regenerate_all() -> DstResult<()> {
     let psm1 = regenerate_psm1(&all_names)?;
     let help = regenerate_help_ps1(&cats, &extras)?;
 
-    workspace::write_file("DevShellTools.psd1", &psd1)?;
-    workspace::write_file("DevShellTools.psm1", &psm1)?;
+    workspace::write_module_manifest(&psd1)?;
+    workspace::write_module_loader(&psm1)?;
     workspace::write_file("Public/Help.ps1", &help)?;
     Ok(())
 }
