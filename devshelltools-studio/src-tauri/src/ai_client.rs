@@ -89,17 +89,22 @@ struct OpenaiRequest {
 
 #[derive(Deserialize)]
 struct OpenaiStreamChunk {
+    #[serde(default)]
     choices: Vec<OpenaiStreamChoice>,
 }
 
 #[derive(Deserialize)]
 struct OpenaiStreamChoice {
-    delta: OpenaiStreamDelta,
+    delta: Option<OpenaiStreamDelta>,
+    #[serde(default)]
+    finish_reason: Option<String>,
 }
 
 #[derive(Deserialize)]
 struct OpenaiStreamDelta {
     content: Option<String>,
+    /// DeepSeek / 部分思考模型：思考过程走此字段，正文仍在 content
+    reasoning_content: Option<String>,
 }
 
 async fn chat_openai(
@@ -135,37 +140,60 @@ async fn chat_openai(
     let mut events = vec![];
     let mut stream = resp.bytes_stream();
     let mut buffer = String::new();
+    let mut saw_reasoning = false;
+    let mut finish_reason = String::new();
 
     while let Some(chunk_result) = stream.next().await {
         let chunk = chunk_result.map_err(|e| DstError::Http(e))?;
         let text = String::from_utf8_lossy(&chunk);
         buffer.push_str(&text);
 
-        // 解析 SSE：每行 "data: {...}" 或 "data: [DONE]"
+        // 解析 SSE：每行 "data: {...}" 或 "data: [DONE]"（兼容 data: 后无空格）
         while let Some(pos) = buffer.find('\n') {
             let line: String = buffer.drain(..=pos).collect();
-            let line = line.trim();
+            let line = line.trim().trim_end_matches('\r');
             if line.is_empty() {
                 continue;
             }
-            if let Some(data) = line.strip_prefix("data: ") {
-                if data.trim() == "[DONE]" {
-                    events.push(StreamEvent {
-                        kind: "done".into(),
-                        content: String::new(),
-                    });
-                    return Ok(events);
-                }
-                if let Ok(chunk) = serde_json::from_str::<OpenaiStreamChunk>(data) {
-                    if let Some(content) = chunk
-                        .choices
-                        .first()
-                        .and_then(|c| c.delta.content.as_ref())
-                    {
-                        events.push(StreamEvent {
-                            kind: "delta".into(),
-                            content: content.clone(),
-                        });
+            let Some(data) = line
+                .strip_prefix("data: ")
+                .or_else(|| line.strip_prefix("data:"))
+            else {
+                continue;
+            };
+            let data = data.trim();
+            if data == "[DONE]" {
+                events.push(StreamEvent {
+                    kind: "done".into(),
+                    content: finish_reason.clone(),
+                });
+                return finalize_openai_events(events, saw_reasoning);
+            }
+            if let Ok(chunk) = serde_json::from_str::<OpenaiStreamChunk>(data) {
+                if let Some(choice) = chunk.choices.first() {
+                    if let Some(fr) = choice.finish_reason.as_ref() {
+                        if !fr.is_empty() {
+                            finish_reason = fr.clone();
+                        }
+                    }
+                    if let Some(delta) = choice.delta.as_ref() {
+                        if let Some(r) = delta.reasoning_content.as_ref() {
+                            if !r.is_empty() {
+                                saw_reasoning = true;
+                                events.push(StreamEvent {
+                                    kind: "reasoning".into(),
+                                    content: r.clone(),
+                                });
+                            }
+                        }
+                        if let Some(content) = delta.content.as_ref() {
+                            if !content.is_empty() {
+                                events.push(StreamEvent {
+                                    kind: "delta".into(),
+                                    content: content.clone(),
+                                });
+                            }
+                        }
                     }
                 }
             }
@@ -173,8 +201,42 @@ async fn chat_openai(
     }
     events.push(StreamEvent {
         kind: "done".into(),
-        content: String::new(),
+        content: finish_reason,
     });
+    finalize_openai_events(events, saw_reasoning)
+}
+
+/// 思考模型若把 token 耗在 reasoning 上，正文可能为空——直接报明确错误，避免前端“假中断”。
+fn finalize_openai_events(
+    events: Vec<StreamEvent>,
+    saw_reasoning: bool,
+) -> DstResult<Vec<StreamEvent>> {
+    let content_len: usize = events
+        .iter()
+        .filter(|e| e.kind == "delta")
+        .map(|e| e.content.len())
+        .sum();
+    if content_len == 0 && saw_reasoning {
+        let preview: String = events
+            .iter()
+            .filter(|e| e.kind == "reasoning")
+            .map(|e| e.content.as_str())
+            .collect::<String>()
+            .chars()
+            .take(120)
+            .collect();
+        let finish = events
+            .iter()
+            .rev()
+            .find(|e| e.kind == "done")
+            .map(|e| e.content.as_str())
+            .unwrap_or("");
+        return Err(DstError::Other(format!(
+            "模型只返回了思考过程、未产出正文（常见原因：思考模式占满 max_tokens）。\
+请将配置中的 max_tokens 调到 8192 以上，或关闭思考模式 / 改用非思考模型。\
+finish_reason={finish}；思考预览：{preview}…"
+        )));
+    }
     Ok(events)
 }
 
@@ -472,5 +534,42 @@ mod tests {
             normalize_openai_base_url("https://api.deepseek.com/v1"),
             "https://api.deepseek.com/v1"
         );
+    }
+
+    #[test]
+    fn reasoning_only_stream_errors_clearly() {
+        let events = vec![
+            StreamEvent {
+                kind: "reasoning".into(),
+                content: "先分析命令安全性".into(),
+            },
+            StreamEvent {
+                kind: "done".into(),
+                content: "length".into(),
+            },
+        ];
+        let err = finalize_openai_events(events, true).unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("思考过程"), "{msg}");
+        assert!(msg.contains("max_tokens"), "{msg}");
+    }
+
+    #[test]
+    fn content_after_reasoning_ok() {
+        let events = vec![
+            StreamEvent {
+                kind: "reasoning".into(),
+                content: "think".into(),
+            },
+            StreamEvent {
+                kind: "delta".into(),
+                content: "1. 问题检查".into(),
+            },
+            StreamEvent {
+                kind: "done".into(),
+                content: "stop".into(),
+            },
+        ];
+        assert!(finalize_openai_events(events, true).is_ok());
     }
 }

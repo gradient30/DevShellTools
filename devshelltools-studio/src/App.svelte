@@ -11,6 +11,7 @@
     clearMessages
   } from "./lib/stores/workspace";
   import { showToast } from "./lib/stores/toast";
+  import { withBusy } from "./lib/stores/busy";
   import { api, type CategoryInfo, type ConsistencyReport, type InstallStatus, type MigrationCheck, type PsFunction, type Webview2Status } from "./lib/api";
   import CategoryList from "./lib/components/CategoryList.svelte";
   import CategoryEditor from "./lib/components/CategoryEditor.svelte";
@@ -19,6 +20,7 @@
   import AiSettings from "./lib/components/AiSettings.svelte";
   import ToolsPage from "./lib/components/ToolsPage.svelte";
   import ToastHost from "./lib/components/ToastHost.svelte";
+  import BusyOverlay from "./lib/components/BusyOverlay.svelte";
   import { buildCommandReviewPrompt, extractFunctionSource } from "./lib/psSource";
 
   type Tab = "manage" | "chat" | "settings" | "tools";
@@ -142,7 +144,9 @@
   }
 
   async function loadAiReady() {
-    aiReadyLoading = true;
+    // 首次以外不要进入 loading 分支，否则会卸载 ChatPanel，导致配置切换后对话状态丢失、像“没即时生效”
+    const firstCheck = !aiReadyChecked;
+    if (firstCheck) aiReadyLoading = true;
     try {
       aiReady = await api.aiReady();
     } catch {
@@ -205,10 +209,12 @@
   async function handleSave(content: string, message: string) {
     if (!selectedFileName) return;
     try {
-      await api.updateCategoryFile(selectedFileName, content, message);
+      await withBusy("正在保存分类并更新元数据…", async () => {
+        await api.updateCategoryFile(selectedFileName!, content, message);
+        await loadCategories();
+        if (tab === "manage") await loadManageSidebar();
+      });
       successMsg.set("已保存并重生成公共部分");
-      await loadCategories();
-      if (tab === "manage") await loadManageSidebar();
     } catch (e) {
       errorMsg.set(String(e));
     }
@@ -217,11 +223,13 @@
   async function handleDelete(fileName: string) {
     if (!confirm(`确认删除分类文件 ${fileName}？此操作会自动重生成公共部分。`)) return;
     try {
-      await api.deleteCategory(fileName, `删除分类 ${fileName}`);
+      await withBusy(`正在删除 ${fileName}…`, async () => {
+        await api.deleteCategory(fileName, `删除分类 ${fileName}`);
+        if (selectedFileName === fileName) selectedFileName = null;
+        await loadCategories();
+        if (tab === "manage") await loadManageSidebar();
+      });
       successMsg.set(`已删除 ${fileName}`);
-      if (selectedFileName === fileName) selectedFileName = null;
-      await loadCategories();
-      if (tab === "manage") await loadManageSidebar();
     } catch (e) {
       errorMsg.set(String(e));
     }
@@ -229,12 +237,14 @@
 
   async function handleCreate(fileName: string, content: string, message: string) {
     try {
-      await api.createCategory(fileName, content, message);
+      await withBusy(`正在创建分类 ${fileName}…`, async () => {
+        await api.createCategory(fileName, content, message);
+        await loadCategories();
+        selectedFileName = fileName;
+        if (tab === "manage") await loadManageSidebar();
+      });
       successMsg.set(`已创建分类 ${fileName}`);
       showNewDialog = false;
-      await loadCategories();
-      selectedFileName = fileName;
-      if (tab === "manage") await loadManageSidebar();
     } catch (e) {
       errorMsg.set(String(e));
     }
@@ -242,10 +252,12 @@
 
   async function handleSync() {
     try {
-      await api.syncPublic("手动同步公共部分");
+      await withBusy("正在同步公共部分与模块目录…", async () => {
+        await api.syncPublic("手动同步公共部分");
+        await loadCategories();
+        await loadManageSidebar();
+      });
       successMsg.set("公共部分已重生成");
-      await loadCategories();
-      await loadManageSidebar();
     } catch (e) {
       errorMsg.set(String(e));
     }
@@ -253,12 +265,23 @@
 
   async function handleApplyCode(code: string, fileName: string) {
     try {
-      const applied = await api.applyAiCode(fileName, code, `AI 插入到 ${fileName}`);
-      successMsg.set(`已插入：${applied.join(", ")}`);
-      await loadCategories();
-      selectedFileName = fileName;
-      tab = "manage";
-      await loadManageSidebar();
+      const applied = await withBusy("正在插入命令并同步模块…", async () => {
+        const names = await api.applyAiCode(fileName, code, `AI 插入到 ${fileName}`);
+        await loadCategories();
+        selectedFileName = fileName;
+        tab = "manage";
+        await loadManageSidebar();
+        void loadInstallStatus();
+        return names;
+      });
+      successMsg.set(
+        `已插入并同步模块：${applied.join(", ")}。已打开的 PowerShell 请执行 Import-Module DevShellTools -Force`
+      );
+      showToast(
+        `已生效到模块目录；当前 PS 会话请 Import-Module DevShellTools -Force`,
+        "success",
+        6000
+      );
     } catch (e) {
       errorMsg.set(String(e));
     }
@@ -303,7 +326,7 @@
       }
       installBusy = true;
       try {
-        const result = await api.uninstallModule();
+        const result = await withBusy("正在卸载 DevShellTools…", () => api.uninstallModule());
         installStatus = result.status;
         showToast(result.message, result.verified ? "success" : "info", 6000);
       } catch (e) {
@@ -314,7 +337,7 @@
     } else {
       installBusy = true;
       try {
-        const result = await api.installModule();
+        const result = await withBusy("正在安装 DevShellTools…", () => api.installModule());
         installStatus = result.status;
         showToast(result.message, result.verified ? "success" : "info", 6000);
       } catch (e) {
@@ -329,6 +352,7 @@
 
 <main class="h-screen flex flex-col bg-slate-950">
   <ToastHost />
+  <BusyOverlay />
   <header class="px-5 py-3 bg-slate-900/80 border-b border-slate-700 flex items-center justify-between">
     <div>
       <h1 class="text-lg font-bold text-cyan-300">DevShellTools Studio</h1>
@@ -513,15 +537,15 @@
       </div>
 
       <div class="absolute inset-0 overflow-hidden" class:hidden={tab !== "chat"} aria-hidden={tab !== "chat"}>
-        {#if aiReadyLoading}
-          <div class="h-full flex items-center justify-center text-slate-400 text-sm">正在检查 AI 配置…</div>
-        {:else if aiReady}
+        {#if aiReady}
           <ChatPanel
             {categories}
             initialPrompt={aiPrompt}
             autoSendToken={aiAutoSendToken}
             onApplyCode={handleApplyCode}
             onOpenSettings={() => (tab = "settings")} />
+        {:else if aiReadyLoading}
+          <div class="h-full flex items-center justify-center text-slate-400 text-sm">正在检查 AI 配置…</div>
         {:else}
           <div class="h-full flex items-center justify-center p-6">
             <div class="text-center">

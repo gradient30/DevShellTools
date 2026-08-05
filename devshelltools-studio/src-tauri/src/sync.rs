@@ -38,7 +38,16 @@ fn public_stamp() -> u64 {
     let mut count = 0u64;
     if let Ok(entries) = std::fs::read_dir(&public) {
         for e in entries.flatten() {
-            if e.path().extension().and_then(|s| s.to_str()) != Some("ps1") {
+            let path = e.path();
+            if path.extension().and_then(|s| s.to_str()) != Some("ps1") {
+                continue;
+            }
+            // Help.ps1 由 regenerate 每次重写，若计入 stamp 会导致分类缓存必失效
+            if path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .is_some_and(|n| n.eq_ignore_ascii_case("Help.ps1"))
+            {
                 continue;
             }
             count += 1;
@@ -50,6 +59,43 @@ fn public_stamp() -> u64 {
         }
     }
     max.wrapping_mul(1_000_003).wrapping_add(count)
+}
+
+fn prime_category_cache(data: &[CategoryInfo]) {
+    let stamp = public_stamp();
+    let _ = save_disk_cache(stamp, data);
+    if let Ok(mut g) = CATEGORY_CACHE.lock() {
+        *g = Some(CategoryCache {
+            stamp,
+            data: data.to_vec(),
+        });
+    }
+}
+
+/// 单次 PowerShell 批量解析 Public/*.ps1，拆成分类文件与非分类文件。
+fn scan_public_once() -> DstResult<(Vec<CategoryInfo>, Vec<PsFunction>)> {
+    let files = workspace::list_public_files()?;
+    let root = workspace::workspace_root();
+    let paths: Vec<std::path::PathBuf> = files
+        .iter()
+        .map(|f| root.join("Public").join(f))
+        .collect();
+    let parsed_batch = ps_parser::parse_public_batch(&paths)?;
+    let mut cats = vec![];
+    let mut extras = vec![];
+    for (file_name, parsed) in parsed_batch {
+        if let Some(cat) = parsed.category {
+            cats.push(CategoryInfo {
+                file_name,
+                category: cat,
+                functions: parsed.functions,
+            });
+        } else {
+            extras.extend(parsed.functions);
+        }
+    }
+    cats.sort_by(|a, b| a.category.name.cmp(&b.category.name));
+    Ok((cats, extras))
 }
 
 fn load_disk_cache(stamp: u64) -> Option<Vec<CategoryInfo>> {
@@ -119,44 +165,12 @@ pub fn scan_categories_cached() -> DstResult<Vec<CategoryInfo>> {
 /// 扫描工作区 Public/ 下所有 .ps1 文件，返回分类列表。
 /// 无 @DST-Category 块的文件（如 Help.ps1）被跳过。
 pub fn scan_categories() -> DstResult<Vec<CategoryInfo>> {
-    let files = workspace::list_public_files()?;
-    let root = workspace::workspace_root();
-    let paths: Vec<std::path::PathBuf> = files
-        .iter()
-        .map(|f| root.join("Public").join(f))
-        .collect();
-    let parsed_batch = ps_parser::parse_public_batch(&paths)?;
-    let mut out = vec![];
-    for (file_name, parsed) in parsed_batch {
-        if let Some(cat) = parsed.category {
-            out.push(CategoryInfo {
-                file_name,
-                category: cat,
-                functions: parsed.functions,
-            });
-        }
-    }
-    out.sort_by(|a, b| a.category.name.cmp(&b.category.name));
-    Ok(out)
+    Ok(scan_public_once()?.0)
 }
 
 /// 所有非分类文件中的函数（如 Help.ps1 的 dsh/Show-DstCategories 等）。
-/// 使用批量解析，避免每个文件单独启动 powershell。
 pub fn scan_extra_functions() -> DstResult<Vec<PsFunction>> {
-    let files = workspace::list_public_files()?;
-    let root = workspace::workspace_root();
-    let paths: Vec<std::path::PathBuf> = files
-        .iter()
-        .map(|f| root.join("Public").join(f))
-        .collect();
-    let parsed_batch = ps_parser::parse_public_batch(&paths)?;
-    let mut out = vec![];
-    for (_file_name, parsed) in parsed_batch {
-        if parsed.category.is_none() {
-            out.extend(parsed.functions);
-        }
-    }
-    Ok(out)
+    Ok(scan_public_once()?.1)
 }
 
 /// 全部应导出的函数名（分类文件函数 + 非分类文件函数）。
@@ -192,9 +206,9 @@ pub fn filter_public_functions(functions: &[crate::ps_parser::PsFunction]) -> Ve
 }
 
 /// 重生成所有公共部分文件。原子操作：全部成功才写盘，失败回滚不写。
+/// 只启动一次 PowerShell 批量解析；完成后回填分类缓存（避免紧接着 list_categories 再扫一遍）。
 pub fn regenerate_all() -> DstResult<()> {
-    let cats = scan_categories()?;
-    let extras = scan_extra_functions()?;
+    let (cats, extras) = scan_public_once()?;
     let all_names = {
         let mut v: Vec<String> = cats
             .iter()
@@ -213,6 +227,8 @@ pub fn regenerate_all() -> DstResult<()> {
     workspace::write_module_manifest(&psd1)?;
     workspace::write_module_loader(&psm1)?;
     workspace::write_file("Public/Help.ps1", &help)?;
+    // Help.ps1 已从 stamp 排除，此处可安全回填缓存
+    prime_category_cache(&cats);
     Ok(())
 }
 

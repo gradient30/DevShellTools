@@ -125,7 +125,7 @@
       base_url: p?.openai_base_url ?? "https://api.openai.com/v1",
       model: p?.openai_default_model ?? "gpt-4o-mini",
       temperature: 0.7,
-      max_tokens: 2048,
+      max_tokens: 8192,
       key_configured: false
     };
     selectedPresetId = p?.id ?? "custom";
@@ -393,6 +393,16 @@
             </div>
           {/if}
         </div>
+        <label class="block">
+          <span class="text-xs text-slate-400">max_tokens（输出上限；思考模型建议 ≥8192）</span>
+          <input
+            type="number"
+            min="256"
+            max="65536"
+            step="256"
+            bind:value={editing.max_tokens}
+            class="mt-1 w-full px-2 py-1.5 text-sm bg-slate-800 border border-slate-700 rounded font-mono" />
+        </label>
         <label class="block">
           <span class="text-xs text-slate-400">API Key {editing.key_configured ? "(已配置，留空不修改)" : ""}</span>
           <input type="password" bind:value={newKey} class="mt-1 w-full px-2 py-1.5 text-sm bg-slate-800 border border-slate-700 rounded font-mono" />

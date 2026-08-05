@@ -78,7 +78,8 @@ fn default_temp() -> f64 {
     0.7
 }
 fn default_max_tokens() -> u32 {
-    2048
+    // 审阅类长提示 + 思考模型需要更大输出预算，2048 易被 reasoning 占满导致正文为空
+    8192
 }
 
 impl Default for AiConfig {
@@ -88,7 +89,7 @@ impl Default for AiConfig {
             base_url: "https://api.openai.com/v1".into(),
             model: "gpt-4o-mini".into(),
             temperature: 0.7,
-            max_tokens: 2048,
+            max_tokens: 8192,
         }
     }
 }
@@ -165,8 +166,17 @@ pub fn load_profiles_store() -> DstResult<AiProfilesStore> {
     }
     let raw = std::fs::read_to_string(&path)?;
     let mut store: AiProfilesStore = serde_json::from_str(&raw)?;
+    let mut bumped = false;
     for p in &mut store.profiles {
         p.key_configured = key_file_for(&p.id).exists();
+        // 旧默认 2048 在 DeepSeek 思考模式下易导致“只思考无正文”；自动抬到 8192
+        if p.max_tokens > 0 && p.max_tokens <= 2048 {
+            p.max_tokens = 8192;
+            bumped = true;
+        }
+    }
+    if bumped {
+        let _ = save_profiles_store(&store);
     }
     Ok(store)
 }

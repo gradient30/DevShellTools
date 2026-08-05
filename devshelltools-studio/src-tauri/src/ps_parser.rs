@@ -2,6 +2,7 @@ use crate::error::{DstError, DstResult};
 use crate::process_util::{output_hidden, ps_base_args};
 use serde::{Deserialize, Serialize};
 use std::process::Command;
+use std::sync::OnceLock;
 
 /// 一个 PowerShell 函数的元信息（从 AST 提取）。
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -281,19 +282,73 @@ foreach ($p in @({paths_ps})) {{ $items += Get-ParsedFile -Path $p }}
 }
 
 fn which_powershell() -> DstResult<&'static str> {
-    let mut cmd = std::process::Command::new("pwsh");
-    cmd.arg("--version");
-    if crate::process_util::output_hidden_ref(&mut cmd).is_ok() {
-        return Ok("pwsh");
-    }
-    Ok("powershell")
+    static EXE: OnceLock<&'static str> = OnceLock::new();
+    Ok(*EXE.get_or_init(|| {
+        let mut cmd = std::process::Command::new("pwsh");
+        cmd.arg("--version");
+        if crate::process_util::output_hidden_ref(&mut cmd).is_ok() {
+            "pwsh"
+        } else {
+            "powershell"
+        }
+    }))
 }
 
-/// 仅做语法校验（不提取元数据），返回 Ok(()) 或错误列表。
+/// 仅做语法校验：轻量 ParseInput，不提取帮助/分类（比 parse_ps1 快一个数量级以上）。
 pub fn validate_syntax(content: &str) -> DstResult<()> {
-    let parsed = parse_ps1(content)?;
-    if !parsed.parse_errors.is_empty() {
-        return Err(DstError::PsParse(parsed.parse_errors.join("; ")));
+    let content = content.strip_prefix('\u{FEFF}').unwrap_or(content);
+    let exe = which_powershell()?;
+    let mut tmp_path = std::env::temp_dir();
+    tmp_path.push(format!(
+        "dst-syntax-{}-{}.ps1",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    {
+        use std::io::Write;
+        let mut f = std::fs::File::create(&tmp_path)
+            .map_err(|e| DstError::PsParse(format!("创建临时文件失败：{e}")))?;
+        f.write_all(&[0xEF, 0xBB, 0xBF])
+            .map_err(|e| DstError::PsParse(format!("写 BOM 失败：{e}")))?;
+        f.write_all(content.as_bytes())
+            .map_err(|e| DstError::PsParse(format!("写内容失败：{e}")))?;
+    }
+    let tmp = tmp_path.to_string_lossy().replace('\'', "''");
+    let script = format!(
+        r#"$ErrorActionPreference = 'Stop'
+$raw = Get-Content -LiteralPath '{tmp}' -Raw -Encoding UTF8
+$errors = $null; $tokens = $null
+[void][System.Management.Automation.Language.Parser]::ParseInput($raw, [ref]$tokens, [ref]$errors)
+if ($errors -and $errors.Count -gt 0) {{
+  ($errors | ForEach-Object {{ $_.Extent.StartLineNumber.ToString() + ':' + $_.Message }}) -join '; '
+}} else {{
+  'OK'
+}}
+"#
+    );
+    let mut cmd = Command::new(exe);
+    for arg in ps_base_args(exe) {
+        cmd.arg(arg);
+    }
+    cmd.args(["-Command", &script]);
+    let output = output_hidden(cmd)
+        .map_err(|e| DstError::PsParse(format!("启动 powershell 失败：{e}")))?;
+    let _ = std::fs::remove_file(&tmp_path);
+    if !output.status.success() {
+        let err = String::from_utf8_lossy(&output.stderr);
+        return Err(DstError::PsParse(format!(
+            "powershell 退出码 {}：{}",
+            output.status,
+            err.trim()
+        )));
+    }
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let line = stdout.lines().map(str::trim).find(|l| !l.is_empty()).unwrap_or("OK");
+    if line != "OK" {
+        return Err(DstError::PsParse(line.to_string()));
     }
     Ok(())
 }

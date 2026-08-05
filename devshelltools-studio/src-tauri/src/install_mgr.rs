@@ -154,6 +154,122 @@ pub fn install_module() -> DstResult<InstallResult> {
     })
 }
 
+/// 将工作区模块文件同步到其它 PowerShell 模块目录（通常为 PS7）。
+/// 工作区本身即 PS5.1 目录，写入后该 shell 已是最新；PS7 需复制，否则只能靠重装。
+pub fn sync_runtime_modules() -> DstResult<String> {
+    let src = workspace::workspace_root();
+    if !src.join("DevShellTools.psd1").exists() && !src.join(workspace::PSD1_DISABLED_NAME).exists() {
+        return Err(DstError::Other("工作区未初始化，无法同步模块".into()));
+    }
+    let mut notes = Vec::new();
+    for target in [ps51_module_dir(), ps7_module_dir()] {
+        if paths_same(&src, &target) {
+            notes.push(format!("已是最新：{}", target.display()));
+            continue;
+        }
+        copy_module_tree(&src, &target)?;
+        notes.push(format!("已同步：{}", target.display()));
+    }
+    notes.push("已打开的 PowerShell 请执行：Import-Module DevShellTools -Force".into());
+    Ok(notes.join("；"))
+}
+
+fn paths_same(a: &Path, b: &Path) -> bool {
+    let fa = std::fs::canonicalize(a).unwrap_or_else(|_| a.to_path_buf());
+    let fb = std::fs::canonicalize(b).unwrap_or_else(|_| b.to_path_buf());
+    fa == fb
+}
+
+fn copy_module_tree(src: &Path, dst: &Path) -> DstResult<()> {
+    std::fs::create_dir_all(dst).map_err(|e| DstError::Other(format!("创建模块目录失败：{e}")))?;
+    for name in ["DevShellTools.psd1", "DevShellTools.psm1", "Private", "Public"] {
+        let from = src.join(name);
+        if !from.exists() {
+            // 软卸载时可能是 *.dst-disabled
+            if name == "DevShellTools.psd1" {
+                let disabled = src.join(workspace::PSD1_DISABLED_NAME);
+                if disabled.exists() {
+                    continue; // 禁用态不同步活动清单
+                }
+            }
+            if name == "DevShellTools.psm1" {
+                let disabled = src.join(workspace::PSM1_DISABLED_NAME);
+                if disabled.exists() {
+                    continue;
+                }
+            }
+            continue;
+        }
+        let to = dst.join(name);
+        // 增量复制：未变更文件跳过，避免每次全量 wipe+copy
+        copy_path(&from, &to)?;
+    }
+    // 清理目标 Public 中源已删除的 .ps1（防止残留旧分类）
+    sync_delete_stale_ps1(&src.join("Public"), &dst.join("Public"))?;
+    Ok(())
+}
+
+fn sync_delete_stale_ps1(src_public: &Path, dst_public: &Path) -> DstResult<()> {
+    if !dst_public.is_dir() {
+        return Ok(());
+    }
+    let entries = std::fs::read_dir(dst_public)
+        .map_err(|e| DstError::Other(format!("读取目标 Public 失败：{e}")))?;
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.extension().and_then(|s| s.to_str()) != Some("ps1") {
+            continue;
+        }
+        let name = entry.file_name();
+        if !src_public.join(&name).exists() {
+            let _ = std::fs::remove_file(&path);
+        }
+    }
+    Ok(())
+}
+
+fn copy_path(from: &Path, to: &Path) -> DstResult<()> {
+    if from.is_dir() {
+        std::fs::create_dir_all(to)
+            .map_err(|e| DstError::Other(format!("创建目录失败 {}: {e}", to.display())))?;
+        for entry in std::fs::read_dir(from)
+            .map_err(|e| DstError::Other(format!("读取目录失败 {}: {e}", from.display())))?
+        {
+            let entry = entry.map_err(|e| DstError::Other(format!("读取目录项失败：{e}")))?;
+            let name = entry.file_name();
+            copy_path(&entry.path(), &to.join(name))?;
+        }
+    } else {
+        if file_unchanged(from, to) {
+            return Ok(());
+        }
+        if let Some(parent) = to.parent() {
+            std::fs::create_dir_all(parent)
+                .map_err(|e| DstError::Other(format!("创建父目录失败：{e}")))?;
+        }
+        std::fs::copy(from, to).map_err(|e| {
+            DstError::Other(format!("复制失败 {} → {}：{e}", from.display(), to.display()))
+        })?;
+    }
+    Ok(())
+}
+
+fn file_unchanged(from: &Path, to: &Path) -> bool {
+    let Ok(src_meta) = std::fs::metadata(from) else {
+        return false;
+    };
+    let Ok(dst_meta) = std::fs::metadata(to) else {
+        return false;
+    };
+    if src_meta.len() != dst_meta.len() {
+        return false;
+    }
+    match (src_meta.modified(), dst_meta.modified()) {
+        (Ok(s), Ok(d)) => s <= d,
+        _ => false,
+    }
+}
+
 /// 卸载：执行工作区的 uninstall.ps1（软卸载：保留 Studio 工作区，禁用 shell 自动加载）。
 pub fn uninstall_module() -> DstResult<InstallResult> {
     let uninstall_ps1 = ensure_uninstall_script()?;

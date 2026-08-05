@@ -185,10 +185,11 @@ $enc = New-Object System.Text.UTF8Encoding $true
 
     let content = workspace::read_file(&rel)?;
     assert_safety_ok(safety::check(&content)?)?;
+    // 块已校验；整文件仅做轻量语法检查（避免再走完整 AST+GetHelpContent）
     ps_parser::validate_syntax(&content)?;
-    sync::regenerate_all()?;
-    sync::invalidate_category_cache();
-        workspace::touch_last_sync()?;
+    sync::regenerate_all()?; // 内部已回填分类缓存
+    workspace::touch_last_sync()?;
+    let _ = crate::install_mgr::sync_runtime_modules();
     Ok(())
 }
 
@@ -220,8 +221,8 @@ $enc = New-Object System.Text.UTF8Encoding $true
     );
     run_ps_script(&script)?;
     sync::regenerate_all()?;
-    sync::invalidate_category_cache();
-        workspace::touch_last_sync()?;
+    workspace::touch_last_sync()?;
+    let _ = crate::install_mgr::sync_runtime_modules();
     Ok(())
 }
 
@@ -356,7 +357,7 @@ $enc = New-Object System.Text.UTF8Encoding $true
     assert_safety_ok(safety::check(&content)?)?;
     ps_parser::validate_syntax(&content)?;
     sync::regenerate_all()?;
-    sync::invalidate_category_cache();
-        workspace::touch_last_sync()?;
+    workspace::touch_last_sync()?;
+    let _ = crate::install_mgr::sync_runtime_modules();
     Ok(names)
 }

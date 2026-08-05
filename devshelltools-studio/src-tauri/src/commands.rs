@@ -15,6 +15,17 @@ use crate::webview2;
 use crate::workspace;
 use tauri::AppHandle;
 
+/// 将同步重活丢到阻塞线程池，避免卡住 UI / async runtime。
+async fn run_blocking<T, F>(f: F) -> DstResult<T>
+where
+    T: Send + 'static,
+    F: FnOnce() -> DstResult<T> + Send + 'static,
+{
+    tauri::async_runtime::spawn_blocking(f)
+        .await
+        .map_err(|e| DstError::Other(format!("后台任务失败：{e}")))?
+}
+
 // ============ 工作区管理 ============
 
 #[tauri::command]
@@ -78,85 +89,100 @@ pub fn delete_workspace_file(rel: String, _message: String) -> DstResult<()> {
 }
 
 #[tauri::command]
-pub fn create_category(file_name: String, content: String, _message: String) -> DstResult<()> {
-    if !file_name.ends_with(".ps1") {
-        return Err(DstError::Other("分类文件名必须以 .ps1 结尾".into()));
-    }
-    let rel = format!("Public/{file_name}");
-    if workspace::read_file(&rel).is_ok() {
-        return Err(DstError::Other(format!("分类文件已存在：{file_name}")));
-    }
-    let report = safety::check(&content)?;
-    if !report.ok {
-        return Err(DstError::SafetyBlocked(report.violations.join("; ")));
-    }
-    ps_parser::validate_syntax(&content)?;
-    workspace::write_file(&rel, &content)?;
-    sync::invalidate_category_cache();
-    sync::regenerate_all()?;
-    workspace::touch_last_sync()?;
-    Ok(())
+pub async fn create_category(file_name: String, content: String, _message: String) -> DstResult<()> {
+    run_blocking(move || {
+        if !file_name.ends_with(".ps1") {
+            return Err(DstError::Other("分类文件名必须以 .ps1 结尾".into()));
+        }
+        let rel = format!("Public/{file_name}");
+        if workspace::read_file(&rel).is_ok() {
+            return Err(DstError::Other(format!("分类文件已存在：{file_name}")));
+        }
+        let report = safety::check(&content)?;
+        if !report.ok {
+            return Err(DstError::SafetyBlocked(report.violations.join("; ")));
+        }
+        ps_parser::validate_syntax(&content)?;
+        workspace::write_file(&rel, &content)?;
+        sync::regenerate_all()?;
+        workspace::touch_last_sync()?;
+        let _ = install_mgr::sync_runtime_modules();
+        Ok(())
+    })
+    .await
 }
 
 #[tauri::command]
-pub fn delete_category(file_name: String, _message: String) -> DstResult<()> {
-    let rel = format!("Public/{file_name}");
-    workspace::delete_file(&rel)?;
-    sync::invalidate_category_cache();
-    sync::regenerate_all()?;
-    workspace::touch_last_sync()?;
-    Ok(())
+pub async fn delete_category(file_name: String, _message: String) -> DstResult<()> {
+    run_blocking(move || {
+        let rel = format!("Public/{file_name}");
+        workspace::delete_file(&rel)?;
+        sync::regenerate_all()?;
+        workspace::touch_last_sync()?;
+        let _ = install_mgr::sync_runtime_modules();
+        Ok(())
+    })
+    .await
 }
 
 #[tauri::command]
-pub fn update_category_file(file_name: String, content: String, _message: String) -> DstResult<()> {
-    let rel = format!("Public/{file_name}");
-    let report = safety::check(&content)?;
-    if !report.ok {
-        return Err(DstError::SafetyBlocked(report.violations.join("; ")));
-    }
-    ps_parser::validate_syntax(&content)?;
-    workspace::write_file(&rel, &content)?;
-    sync::invalidate_category_cache();
-    sync::regenerate_all()?;
-    workspace::touch_last_sync()?;
-    Ok(())
+pub async fn update_category_file(file_name: String, content: String, _message: String) -> DstResult<()> {
+    run_blocking(move || {
+        let rel = format!("Public/{file_name}");
+        let report = safety::check(&content)?;
+        if !report.ok {
+            return Err(DstError::SafetyBlocked(report.violations.join("; ")));
+        }
+        ps_parser::validate_syntax(&content)?;
+        workspace::write_file(&rel, &content)?;
+        sync::regenerate_all()?;
+        workspace::touch_last_sync()?;
+        let _ = install_mgr::sync_runtime_modules();
+        Ok(())
+    })
+    .await
 }
 
 #[tauri::command]
-pub fn sync_public(_message: String) -> DstResult<()> {
-    sync::regenerate_all()?;
-    sync::invalidate_category_cache();
-    workspace::touch_last_sync()?;
-    Ok(())
+pub async fn sync_public(_message: String) -> DstResult<()> {
+    run_blocking(move || {
+        sync::regenerate_all()?;
+        workspace::touch_last_sync()?;
+        let _ = install_mgr::sync_runtime_modules();
+        Ok(())
+    })
+    .await
 }
 
 // ============ 函数级 CRUD ============
 
 #[tauri::command]
-pub fn upsert_function(
+pub async fn upsert_function(
     file_name: String, name: String, synopsis: String, example: String,
     body: Option<String>, _message: String,
 ) -> DstResult<()> {
-    function_edit::upsert_function(
-        &file_name,
-        FunctionDraft { name, synopsis, example, body },
-    )
+    run_blocking(move || {
+        function_edit::upsert_function(
+            &file_name,
+            FunctionDraft { name, synopsis, example, body },
+        )
+    })
+    .await
 }
 
 #[tauri::command]
-pub fn delete_function(file_name: String, func_name: String, _message: String) -> DstResult<()> {
-    function_edit::delete_function(&file_name, &func_name)
+pub async fn delete_function(file_name: String, func_name: String, _message: String) -> DstResult<()> {
+    run_blocking(move || function_edit::delete_function(&file_name, &func_name)).await
 }
 
 #[tauri::command]
-pub fn test_function(file_name: String, func_name: String) -> DstResult<FunctionTestResult> {
-    function_edit::test_function(&file_name, &func_name)
+pub async fn test_function(file_name: String, func_name: String) -> DstResult<FunctionTestResult> {
+    run_blocking(move || function_edit::test_function(&file_name, &func_name)).await
 }
 
 #[tauri::command]
-pub fn apply_ai_code(file_name: String, code: String, _message: String) -> DstResult<Vec<String>> {
-    function_edit::apply_code_to_category(&file_name, &code)
+pub async fn apply_ai_code(file_name: String, code: String, _message: String) -> DstResult<Vec<String>> {
+    run_blocking(move || function_edit::apply_code_to_category(&file_name, &code)).await
 }
 
 // ============ 安装 / 卸载 ============
@@ -167,20 +193,20 @@ pub fn install_status() -> install_mgr::InstallStatus {
 }
 
 #[tauri::command]
-pub fn install_module() -> DstResult<install_mgr::InstallResult> {
-    install_mgr::install_module()
+pub async fn install_module() -> DstResult<install_mgr::InstallResult> {
+    run_blocking(install_mgr::install_module).await
 }
 
 #[tauri::command]
-pub fn uninstall_module() -> DstResult<install_mgr::InstallResult> {
-    install_mgr::uninstall_module()
+pub async fn uninstall_module() -> DstResult<install_mgr::InstallResult> {
+    run_blocking(install_mgr::uninstall_module).await
 }
 
 // ============ 校验 ============
 
 #[tauri::command]
-pub fn consistency_check() -> DstResult<consistency::ConsistencyReport> {
-    consistency::check()
+pub async fn consistency_check() -> DstResult<consistency::ConsistencyReport> {
+    run_blocking(consistency::check).await
 }
 
 #[tauri::command]
@@ -286,7 +312,7 @@ pub async fn fetch_ai_models(id: String) -> DstResult<Vec<String>> {
 #[tauri::command]
 pub async fn fetch_ai_models_preview(input: FetchModelsInput) -> DstResult<Vec<String>> {
     if input.key.trim().is_empty() { return Err(DstError::Other("请先填写 API Key".into())); }
-    let config = AiConfig { protocol: input.protocol, base_url: input.base_url, model: String::new(), temperature: 0.7, max_tokens: 2048 };
+    let config = AiConfig { protocol: input.protocol, base_url: input.base_url, model: String::new(), temperature: 0.7, max_tokens: 8192 };
     ai_client::list_models(&config, input.key.trim()).await
 }
 
@@ -298,6 +324,11 @@ async fn ai_chat_inner(messages: Vec<ChatMessage>, profile_id: Option<String>) -
     let api_key = ai_config::load_key_for_profile(&id)?;
     let events = ai_client::chat_stream(&config, &api_key, messages).await?;
     let full: String = events.iter().filter(|e| e.kind == "delta").map(|e| e.content.as_str()).collect();
+    if full.trim().is_empty() {
+        return Err(DstError::Other(
+            "模型返回空正文。若使用 DeepSeek 思考模式，请增大 max_tokens（≥8192）或关闭思考。".into(),
+        ));
+    }
     Ok(full)
 }
 
@@ -310,20 +341,39 @@ pub async fn ai_chat(messages: Vec<ChatMessage>, profile_id: Option<String>) -> 
 pub async fn ai_chat_with_validation(messages: Vec<ChatMessage>, profile_id: Option<String>) -> DstResult<AiChatResult> {
     let reply = ai_chat_inner(messages, profile_id).await?;
     let code_blocks = ai_config::extract_code_blocks(&reply);
-    let mut validated = vec![];
-    for code in &code_blocks {
-        let syntax_ok = ps_parser::validate_syntax(code).is_ok();
-        let syntax_err = match ps_parser::validate_syntax(code) { Ok(_) => String::new(), Err(e) => e.to_string() };
-        let safety_report = safety::check(code).unwrap_or(safety::SafetyReport { ok: false, violations: vec!["安全检查内部错误".into()] });
-        let parsed = ps_parser::parse_ps1(code).ok();
-        let (functions, category) = parsed.as_ref().map(|p| {
-            let fns: Vec<String> = p.functions.iter().map(|f| f.name.clone()).collect();
-            let cat = p.category.as_ref().map(|c| c.name.clone());
-            (fns, cat)
-        }).unwrap_or_default();
-        validated.push(ValidatedCodeBlock { code: code.clone(), syntax_ok, syntax_err, safety_ok: safety_report.ok, safety_violations: safety_report.violations, functions, category });
-    }
-    Ok(AiChatResult { reply, code_blocks: validated })
+    run_blocking(move || {
+        let mut validated = vec![];
+        for code in &code_blocks {
+            // 一次 parse：同时得到语法结果与函数名，避免 validate×2 + parse
+            let (syntax_ok, syntax_err, functions, category) = match ps_parser::parse_ps1(code) {
+                Ok(p) if p.parse_errors.is_empty() => {
+                    let fns: Vec<String> = p.functions.iter().map(|f| f.name.clone()).collect();
+                    let cat = p.category.as_ref().map(|c| c.name.clone());
+                    (true, String::new(), fns, cat)
+                }
+                Ok(p) => (false, p.parse_errors.join("; "), vec![], None),
+                Err(e) => (false, e.to_string(), vec![], None),
+            };
+            let safety_report = safety::check(code).unwrap_or(safety::SafetyReport {
+                ok: false,
+                violations: vec!["安全检查内部错误".into()],
+            });
+            validated.push(ValidatedCodeBlock {
+                code: code.clone(),
+                syntax_ok,
+                syntax_err,
+                safety_ok: safety_report.ok,
+                safety_violations: safety_report.violations,
+                functions,
+                category,
+            });
+        }
+        Ok(AiChatResult {
+            reply,
+            code_blocks: validated,
+        })
+    })
+    .await
 }
 
 #[derive(Debug, Clone, serde::Serialize)]

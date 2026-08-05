@@ -90,7 +90,9 @@
       void sendPrompt(initialPrompt.trim());
       return;
     }
-    if (initialPrompt && messages.length === 0 && !loading) {
+    // 编辑/回退草稿中禁止用 initialPrompt 覆盖发送框（否则点「编辑」像没反应）
+    if (draftMode) return;
+    if (initialPrompt && messages.length === 0 && !loading && !input.trim()) {
       input = initialPrompt;
     }
   });
@@ -267,12 +269,21 @@
     }));
   }
 
+  function focusComposer() {
+    queueMicrotask(() => {
+      const el = document.getElementById("dst-chat-input") as HTMLInputElement | null;
+      el?.focus();
+      el?.scrollIntoView({ block: "nearest" });
+    });
+  }
+
   /** 回退：截断该条及之后，内容进入发送框，可取消恢复 */
   function rewindTo(index: number, content: string) {
     if (!draftSnapshot) draftSnapshot = captureSnapshot();
     draftMode = "rewind";
     truncateFrom(index);
     input = content;
+    focusComposer();
   }
 
   /** 编辑：同回退，语义上强调改写后重发 */
@@ -281,6 +292,7 @@
     draftMode = "edit";
     truncateFrom(index);
     input = content;
+    focusComposer();
   }
 
   function cancelDraft() {
@@ -345,15 +357,25 @@
             <div class="bg-cyan-700/40 rounded-lg rounded-tr-sm px-3 py-2 text-sm text-cyan-50 whitespace-pre-wrap break-words">
               {m.content}
             </div>
-            <div class="flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+            <div class="flex gap-2">
               <button
-                class="text-xs text-slate-500 hover:text-cyan-300 disabled:opacity-40"
+                type="button"
+                class="text-xs text-slate-400 hover:text-cyan-300 disabled:opacity-40 underline-offset-2 hover:underline"
                 disabled={loading}
-                onclick={() => editUserMessage(i, m.content)}>编辑</button>
+                onclick={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  editUserMessage(i, m.content);
+                }}>编辑</button>
               <button
-                class="text-xs text-slate-500 hover:text-amber-300 disabled:opacity-40"
+                type="button"
+                class="text-xs text-slate-400 hover:text-amber-300 disabled:opacity-40 underline-offset-2 hover:underline"
                 disabled={loading}
-                onclick={() => rewindTo(i, m.content)}>回退到此</button>
+                onclick={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  rewindTo(i, m.content);
+                }}>回退到此</button>
             </div>
           </div>
           <div class="w-8 h-8 rounded-full bg-cyan-800/60 border border-cyan-700 flex items-center justify-center text-sm shrink-0">👤</div>
@@ -476,6 +498,7 @@
     {/if}
     <div class="flex gap-2">
       <input
+        id="dst-chat-input"
         bind:value={input}
         onkeydown={(e) => e.key === "Enter" && !e.shiftKey && (e.preventDefault(), send())}
         placeholder={draftMode ? "编辑后发送，或点取消恢复…" : "继续追问，或描述新命令…"}
