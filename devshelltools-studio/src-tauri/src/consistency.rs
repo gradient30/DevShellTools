@@ -34,7 +34,8 @@ pub fn check() -> DstResult<ConsistencyReport> {
     let mut warnings = vec![];
 
     // 1. 扫描实际函数（只取应导出的：小写开头）
-    let cats = sync::scan_categories()?;
+    // 优先走缓存，避免与 list_categories 并发时重复启动 powershell。
+    let cats = sync::scan_categories_cached()?;
     let extras = sync::scan_extra_functions()?;
     let actual: Vec<String> = cats
         .iter()

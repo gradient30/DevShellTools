@@ -1,12 +1,26 @@
-﻿
+﻿<#
+.SYNOPSIS
+卸载 DevShellTools。
+.DESCRIPTION
+清理 Profile 中的 Import-Module，并删除非 Studio 工作区的模块目录。
+若目录含 .studio（Studio 工作区 / PS5.1 同源路径），则保留，仅做软卸载。
+#>
+
 [CmdletBinding()]
 param()
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
+function Get-DstDocuments {
+    if (-not [string]::IsNullOrWhiteSpace($env:DST_MY_DOCUMENTS)) {
+        return $env:DST_MY_DOCUMENTS.TrimEnd('\', '/')
+    }
+    return [Environment]::GetFolderPath("MyDocuments")
+}
+
 $moduleName = "DevShellTools"
-$documents = [Environment]::GetFolderPath("MyDocuments")
+$documents = Get-DstDocuments
 
 Remove-Module $moduleName -Force -ErrorAction SilentlyContinue
 
@@ -15,10 +29,14 @@ $targets = @(
     (Join-Path $documents "PowerShell\Modules\$moduleName")
 )
 foreach ($target in $targets) {
-    if (Test-Path -LiteralPath $target) {
-        Remove-Item -LiteralPath $target -Recurse -Force
-        Write-Host "[成功] 已删除：$target" -ForegroundColor Green
+    if (-not (Test-Path -LiteralPath $target)) { continue }
+    $studioMarker = Join-Path $target ".studio"
+    if (Test-Path -LiteralPath $studioMarker) {
+        Write-Host "[跳过] Studio 工作区保留：$target" -ForegroundColor Yellow
+        continue
     }
+    Remove-Item -LiteralPath $target -Recurse -Force
+    Write-Host "[成功] 已删除：$target" -ForegroundColor Green
 }
 
 $profiles = @(

@@ -66,20 +66,28 @@
   async function loadInstallStatus() {
     try {
       installStatus = await api.installStatus();
-    } catch {
+    } catch (e) {
       installStatus = null;
+      showToast(`安装状态检测失败：${String(e)}`, "error", 5000);
     }
   }
 
   async function loadCategories() {
     if (categoriesLoading) return;
     categoriesLoading = true;
+    // 与「初始化成功」分阶段：成功条改为后续步骤提示，避免矛盾观感
+    if ($successMsg === "工作区初始化成功。") {
+      successMsg.set("工作区已就绪，正在解析分类元数据…");
+    }
     categoriesLoadMsg = "正在解析分类（PowerShell 元数据）…";
     try {
       const result = await api.listCategories();
       categories = result.categories;
       categoriesLoaded = true;
       categoriesLoadMsg = result.cached ? "已从缓存加载分类" : "分类解析完成";
+      if ($successMsg?.includes("正在解析分类")) {
+        successMsg.set(null);
+      }
       if (!result.cached) {
         showToast("分类信息已更新", "success", 2500);
       }
@@ -150,8 +158,15 @@
   }
 
   $effect(() => {
-    if (tab === "manage" && $workspace?.initialized && !consistency) {
-      loadManageSidebar();
+    // 等分类加载完成后再做一致性校验，避免与 parse_public_batch 叠加重负载导致界面卡顿
+    if (
+      tab === "manage" &&
+      $workspace?.initialized &&
+      categoriesLoaded &&
+      !categoriesLoading &&
+      !consistency
+    ) {
+      void loadManageSidebar();
     }
   });
 
@@ -159,12 +174,12 @@
     await init();
     if ($workspace?.initialized) {
       categoriesLoaded = false;
-      await loadCategories();
+      consistency = null;
       await loadInstallStatus();
+      await loadCategories();
       aiReadyChecked = false;
-      await loadAiReady();
+      void loadAiReady();
       toolsLoaded = false;
-      loadToolsData();
     }
   }
 
@@ -307,8 +322,17 @@
             ? 'bg-amber-700 hover:bg-amber-600 text-white'
             : 'bg-emerald-700 hover:bg-emerald-600 text-white'}"
           onclick={handleInstallToggle}
-          disabled={installBusy}>
-          {installBusy ? "处理中…" : installStatus?.installed ? "卸载" : "安装"}
+          disabled={installBusy || installStatus === null}
+          title={installStatus
+            ? `模块:${installStatus.ps51_module_present || installStatus.ps7_module_present ? "有" : "无"} · Profile:${installStatus.profile_configured ? "已配置" : "未配置"}`
+            : "正在检测安装状态…"}>
+          {installBusy
+            ? "处理中…"
+            : installStatus === null
+              ? "检测中…"
+              : installStatus.installed
+                ? "卸载"
+                : "安装"}
         </button>
       {/if}
     </nav>
@@ -365,10 +389,21 @@
       <div class="px-4 py-2 bg-cyan-950/70 border-b border-cyan-800/80 text-cyan-100 text-sm flex items-center gap-3 shrink-0">
         <div class="h-4 w-4 border-2 border-cyan-400/30 border-t-cyan-400 rounded-full animate-spin shrink-0"></div>
         <span>{categoriesLoadMsg || "正在加载分类信息…"}</span>
-        <span class="text-xs text-cyan-400/80 ml-auto">首次约 5–10 秒，之后从缓存秒开</span>
+        <span class="text-xs text-cyan-400/80 ml-auto">首次约 5–10 秒，之后从缓存秒开；加载期间请稍候</span>
       </div>
     {/if}
     <div class="flex-1 overflow-hidden relative min-h-0">
+      {#if categoriesLoading}
+        <div
+          class="absolute inset-0 z-20 bg-slate-950/40 backdrop-blur-[1px] flex items-center justify-center pointer-events-auto"
+          aria-busy="true">
+          <div class="bg-slate-900 border border-slate-700 rounded-lg px-5 py-4 text-sm text-slate-200 shadow-lg max-w-sm text-center">
+            <div class="mx-auto mb-3 h-6 w-6 border-2 border-cyan-400/30 border-t-cyan-400 rounded-full animate-spin"></div>
+            <p>{categoriesLoadMsg || "正在解析分类元数据…"}</p>
+            <p class="text-xs text-slate-500 mt-2">后台调用 PowerShell AST，界面暂时锁定以免误点</p>
+          </div>
+        </div>
+      {/if}
       <div class="absolute inset-0 flex overflow-hidden" class:hidden={tab !== "manage"} aria-hidden={tab !== "manage"}>
         <CategoryList {categories} {selectedFileName} loading={categoriesLoading} onSelect={onSelect} />
         <CategoryEditor
@@ -380,8 +415,11 @@
           onAiGenerate={handleAiGenerate} />
         <aside class="w-64 shrink-0 bg-slate-900/60 border-l border-slate-700 overflow-y-auto p-3">
           <h3 class="text-xs font-semibold text-slate-400 mb-2">一致性校验</h3>
-          {#if !consistency}
+          {#if categoriesLoading || !consistency}
             <div class="h-16 bg-slate-800/40 rounded animate-pulse"></div>
+            {#if categoriesLoading}
+              <p class="text-xs text-slate-500 mt-2">等待分类解析完成…</p>
+            {/if}
           {:else if consistency}
             <div
               class="p-2 rounded text-xs mb-3 {consistency.ok

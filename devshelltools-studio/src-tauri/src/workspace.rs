@@ -19,8 +19,15 @@ pub fn workspace_root() -> PathBuf {
 }
 
 /// 获取 MyDocuments 路径（与 install.ps1 的 [Environment]::GetFolderPath('MyDocuments') 一致）。
-/// 用 OnceLock 缓存，全进程只调一次 powershell.exe（静默无窗口）。
+/// 优先读 `DST_MY_DOCUMENTS`（验收测试隔离用）；否则用 OnceLock 缓存系统查询结果。
+/// 注意：仅改 USERPROFILE 不会改变 GetFolderPath('MyDocuments')，测试必须设 DST_MY_DOCUMENTS。
 fn my_documents_path() -> Option<PathBuf> {
+    if let Ok(p) = std::env::var("DST_MY_DOCUMENTS") {
+        let p = p.trim();
+        if !p.is_empty() {
+            return Some(PathBuf::from(p));
+        }
+    }
     let ref_opt: &Option<PathBuf> = MY_DOCS_CACHE.get_or_init(|| {
         let mut cmd = std::process::Command::new("powershell");
         cmd.args(["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass",

@@ -61,25 +61,23 @@ pub fn install_status() -> InstallStatus {
     InstallStatus { workspace_ready, ps51_module_present, ps7_module_present, profile_configured, installed }
 }
 
-/// 确保工作区有 install.ps1，没有则从内嵌模板写入完整工作区。
+/// 每次安装前从内嵌模板覆盖写入 install.ps1，避免工作区残留旧版自毁脚本。
 fn ensure_install_script() -> DstResult<PathBuf> {
     let ws = workspace::workspace_root();
+    std::fs::create_dir_all(&ws)
+        .map_err(|e| DstError::Other(format!("创建工作区失败：{e}")))?;
     let install_ps1 = ws.join("install.ps1");
-    if install_ps1.exists() {
-        return Ok(install_ps1);
-    }
-    // 工作区无 install.ps1 → 从内嵌模板写一份到工作区
     std::fs::write(&install_ps1, crate::template::INSTALL_PS1)
         .map_err(|e| DstError::Other(format!("写入 install.ps1 到工作区失败：{e}")))?;
     Ok(install_ps1)
 }
 
+/// 每次卸载前从内嵌模板覆盖写入 uninstall.ps1。
 fn ensure_uninstall_script() -> DstResult<PathBuf> {
     let ws = workspace::workspace_root();
+    std::fs::create_dir_all(&ws)
+        .map_err(|e| DstError::Other(format!("创建工作区失败：{e}")))?;
     let uninstall_ps1 = ws.join("uninstall.ps1");
-    if uninstall_ps1.exists() {
-        return Ok(uninstall_ps1);
-    }
     std::fs::write(&uninstall_ps1, crate::template::UNINSTALL_PS1)
         .map_err(|e| DstError::Other(format!("写入 uninstall.ps1 到工作区失败：{e}")))?;
     Ok(uninstall_ps1)

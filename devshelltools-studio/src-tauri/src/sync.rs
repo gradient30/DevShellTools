@@ -141,13 +141,17 @@ pub fn scan_categories() -> DstResult<Vec<CategoryInfo>> {
 }
 
 /// 所有非分类文件中的函数（如 Help.ps1 的 dsh/Show-DstCategories 等）。
+/// 使用批量解析，避免每个文件单独启动 powershell。
 pub fn scan_extra_functions() -> DstResult<Vec<PsFunction>> {
     let files = workspace::list_public_files()?;
+    let root = workspace::workspace_root();
+    let paths: Vec<std::path::PathBuf> = files
+        .iter()
+        .map(|f| root.join("Public").join(f))
+        .collect();
+    let parsed_batch = ps_parser::parse_public_batch(&paths)?;
     let mut out = vec![];
-    for f in files {
-        let rel = format!("Public/{f}");
-        let content = workspace::read_file(&rel)?;
-        let parsed = ps_parser::parse_ps1(&content)?;
+    for (_file_name, parsed) in parsed_batch {
         if parsed.category.is_none() {
             out.extend(parsed.functions);
         }

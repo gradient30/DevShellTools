@@ -26,11 +26,22 @@ mod tests {
         devshelltools_studio_lib::workspace::init_from_template().expect("init");
         let root = devshelltools_studio_lib::workspace::workspace_root();
         
-        // 创建测试文件
-        devshelltools_studio_lib::workspace::write_file("Public/TestExport.ps1", "# test export\n")
+        // 创建可安全导入的测试脚本（当前导出仅为 Public/*.ps1 平铺）
+        let test_ps1 = r#"
+function testexport {
+<#
+.SYNOPSIS
+导出导入验收用命令。
+.EXAMPLE
+testexport
+#>
+    [CmdletBinding()] param()
+    Write-Output "ok"
+}
+"#;
+        devshelltools_studio_lib::workspace::write_file("Public/TestExport.ps1", test_ps1)
             .unwrap();
-        
-        // 导出到系统 temp（不在 USERPROFILE 隔离目录内，便于跨 profile 导入测试）
+
         let export_dir = std::env::temp_dir().join(format!(
             "dst-export-target-{}-{}",
             std::process::id(),
@@ -42,24 +53,28 @@ mod tests {
         let _ = std::fs::remove_dir_all(&export_dir);
         export::export_scripts(export_dir.to_str().unwrap()).expect("export");
         assert!(
-            export_dir.join("DevShellTools.psd1").exists(),
-            "导出应含 psd1"
+            export_dir.join("TestExport.ps1").exists(),
+            "导出目录应平铺含 TestExport.ps1"
         );
         assert!(
-            export_dir.join("Public").join("TestExport.ps1").exists(),
-            "导出应含测试文件"
+            !export_dir.join("DevShellTools.psd1").exists(),
+            "脚本级导出不应含公共部分 psd1"
         );
         assert!(!export_dir.join(".git").exists(), "导出不含 .git");
+        let _ = root;
 
         // 导入到新位置（模拟多机）
         drop(_g);
         let _g2 = IsolatedProfile::new("m4-import");
         let root2 = devshelltools_studio_lib::workspace::workspace_root();
-        // 初始化新工作区
         devshelltools_studio_lib::workspace::init_from_template().expect("init2");
-        
-        let files = export::import_scripts(export_dir.to_str().unwrap()).expect("import");
-        assert!(!files.is_empty(), "应导入文件");
+
+        let imported = export::import_scripts(export_dir.to_str().unwrap()).expect("import");
+        assert!(
+            imported.imported.iter().any(|n| n == "TestExport.ps1"),
+            "应导入 TestExport.ps1：{:?}",
+            imported
+        );
         assert!(
             root2.join("Public").join("TestExport.ps1").exists(),
             "导入后应含测试文件"

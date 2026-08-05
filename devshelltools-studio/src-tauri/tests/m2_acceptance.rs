@@ -26,8 +26,6 @@ mod tests {
         if workspace::read_file("Public/Docker.ps1").is_ok() {
             workspace::delete_file("Public/Docker.ps1").expect("delete docker");
             sync::regenerate_all().expect("regenerate");
-            let root = workspace::workspace_root();
-            git::snapshot(&root, "test: cleanup docker").expect("snapshot");
         }
         let report = consistency::check().expect("consistency check");
         assert!(report.ok, "基线应一致，错误：{:?}", report.errors);
@@ -81,9 +79,7 @@ dps
         workspace::write_file("Public/Docker.ps1", docker_code).expect("write");
         // 重生成
         sync::regenerate_all().expect("regenerate");
-        // git 快照
-        let root = workspace::workspace_root();
-        
+
         // 校验：现在应有 6 个分类
         let cats = sync::scan_categories().expect("scan");
         assert_eq!(cats.len(), 6, "新建后应有 6 个分类");
