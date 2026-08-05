@@ -2,7 +2,6 @@
   import type { PsFunction } from "../api";
   import { api } from "../api";
   import { showToast } from "../stores/toast";
-  import { withBusy } from "../stores/busy";
 
   let {
     fileName,
@@ -58,24 +57,19 @@
     }
     busy = true;
     errMsg = null;
+    const name = draftName.trim();
     try {
-      await withBusy(`正在保存命令 ${draftName.trim()}…`, async () => {
-        await api.upsertFunction(
-          fileName,
-          draftName.trim(),
-          draftSynopsis.trim(),
-          draftExample.trim() || draftName.trim(),
-          null,
-          `更新命令 ${draftName.trim()}`
-        );
-        await onChanged();
-      });
-      editingName = null;
-      showToast(
-        `已保存并同步模块：${draftName.trim()}（已开 PS 请 Import-Module DevShellTools -Force）`,
-        "success",
-        5500
+      await api.upsertFunction(
+        fileName,
+        name,
+        draftSynopsis.trim(),
+        draftExample.trim() || name,
+        null,
+        `更新命令 ${name}`
       );
+      editingName = null;
+      void onChanged();
+      showToast(`已保存 ${name}`, "success", 2200);
     } catch (e) {
       errMsg = String(e);
     } finally {
@@ -88,11 +82,9 @@
     busy = true;
     errMsg = null;
     try {
-      await withBusy(`正在删除命令 ${funcName}…`, async () => {
-        await api.deleteFunction(fileName, funcName, `删除命令 ${funcName}`);
-        await onChanged();
-      });
-      showToast(`已删除并同步：${funcName}`, "info");
+      await api.deleteFunction(fileName, funcName, `删除命令 ${funcName}`);
+      void onChanged();
+      showToast(`已删除 ${funcName}`, "info", 2000);
     } catch (e) {
       errMsg = String(e);
     } finally {
@@ -103,9 +95,7 @@
   async function test(funcName: string) {
     busy = true;
     try {
-      const r = await withBusy(`正在测试 ${funcName}…`, () =>
-        api.testFunction(fileName, funcName)
-      );
+      const r = await api.testFunction(fileName, funcName);
       const msg = r.ok ? r.stdout.trim() || "(执行成功，无输出)" : r.stderr;
       showToast(`${funcName} · ${r.ok ? "通过" : "失败"}\n${msg}`, r.ok ? "success" : "error", 5000);
     } catch (e) {

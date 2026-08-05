@@ -2,6 +2,27 @@ use crate::ai_config::{self, AiConfig, AiProtocol, ChatMessage};
 use crate::error::{DstError, DstResult};
 use futures_util::StreamExt;
 use serde::{Deserialize, Serialize};
+use std::sync::atomic::{AtomicBool, Ordering};
+
+/// 用户点击「停止」时置位；流式读取循环会尽快中断。
+static CHAT_CANCEL: AtomicBool = AtomicBool::new(false);
+
+/// 请求取消当前 AI 对话（可在任意线程调用）。
+pub fn cancel_chat() {
+    CHAT_CANCEL.store(true, Ordering::SeqCst);
+}
+
+fn reset_chat_cancel() {
+    CHAT_CANCEL.store(false, Ordering::SeqCst);
+}
+
+fn chat_cancelled() -> bool {
+    CHAT_CANCEL.load(Ordering::SeqCst)
+}
+
+fn cancelled_error() -> DstError {
+    DstError::Other("已停止生成".into())
+}
 
 /// 一次流式请求的输入
 #[derive(Debug, Clone, Serialize)]
@@ -24,6 +45,7 @@ pub async fn chat_stream(
     api_key: &str,
     messages: Vec<ChatMessage>,
 ) -> DstResult<Vec<StreamEvent>> {
+    reset_chat_cancel();
     // 注入 system prompt 作为首条消息
     let mut full_messages = vec![ChatMessage {
         role: "system".into(),
@@ -77,6 +99,12 @@ fn temperature_for_request(model: &str, configured: f64) -> Option<f64> {
 
 // ============ OpenAI 协议 ============
 
+#[derive(Debug, Clone, Serialize)]
+struct ThinkingParam {
+    #[serde(rename = "type")]
+    kind: String,
+}
+
 #[derive(Serialize)]
 struct OpenaiRequest {
     model: String,
@@ -85,6 +113,44 @@ struct OpenaiRequest {
     temperature: Option<f64>,
     max_tokens: u32,
     stream: bool,
+    /// DeepSeek V4 默认 thinking=enabled，思考 token 计入 max_tokens，易 length 截断无正文
+    #[serde(skip_serializing_if = "Option::is_none")]
+    thinking: Option<ThinkingParam>,
+}
+
+/// DeepSeek（官方端点或模型名）：Studio 审阅场景默认关闭思考，保证稳定产出正文。
+fn deepseek_disable_thinking(base_url: &str, model: &str) -> Option<ThinkingParam> {
+    let u = base_url.to_lowercase();
+    let m = model.to_lowercase();
+    if u.contains("deepseek.com") || m.starts_with("deepseek") {
+        Some(ThinkingParam {
+            kind: "disabled".into(),
+        })
+    } else {
+        None
+    }
+}
+
+/// 网关因不认识 thinking 字段而 4xx 时才去掉该字段重试（避免 401/429 误去掉后重新打开思考）。
+fn is_thinking_param_rejected(err: &DstError) -> bool {
+    let s = err.to_string().to_lowercase();
+    let is_client_err = s.contains(" 400")
+        || s.contains(" 422")
+        || s.contains("返回 400")
+        || s.contains("返回 422");
+    is_client_err
+        && (s.contains("thinking")
+            || s.contains("unknown field")
+            || s.contains("unexpected")
+            || s.contains("unrecognized"))
+}
+
+/// 审阅类长输出需要更大预算；DeepSeek 抬底，避免截断。
+fn effective_max_tokens(base_url: &str, model: &str, configured: u32) -> u32 {
+    let deepseek = base_url.to_lowercase().contains("deepseek.com")
+        || model.to_lowercase().starts_with("deepseek");
+    let floor = if deepseek { 16384 } else { 2048 };
+    configured.max(floor)
 }
 
 #[derive(Deserialize)]
@@ -113,14 +179,101 @@ async fn chat_openai(
     messages: Vec<ChatMessage>,
 ) -> DstResult<Vec<StreamEvent>> {
     let base = normalize_openai_base_url(&config.base_url);
+    // DeepSeek V4 默认 thinking=enabled：Studio 审阅默认关闭，避免 reasoning 占满 max_tokens
+    let mut thinking = deepseek_disable_thinking(&base, &config.model);
+    let mut events = match chat_openai_once(
+        config,
+        api_key,
+        &base,
+        messages.clone(),
+        thinking.clone(),
+    )
+    .await
+    {
+        Ok(e) => e,
+        Err(e) if thinking.is_some() && is_thinking_param_rejected(&e) => {
+            log::warn!("网关拒绝 thinking 字段，去掉后重试：{e}");
+            thinking = None;
+            chat_openai_once(config, api_key, &base, messages.clone(), None).await?
+        }
+        Err(e) => return Err(e),
+    };
+
+    if openai_needs_thinking_retry(&events) {
+        if thinking.as_ref().map(|t| t.kind.as_str()) != Some("disabled") {
+            thinking = Some(ThinkingParam {
+                kind: "disabled".into(),
+            });
+            events = chat_openai_once(
+                config,
+                api_key,
+                &base,
+                messages.clone(),
+                thinking.clone(),
+            )
+            .await?;
+        }
+        if openai_needs_thinking_retry(&events) {
+            // 仍被 length 截断：抬高输出预算再试（并继续关闭思考）
+            let mut boosted = config.clone();
+            boosted.max_tokens = config.max_tokens.max(16384).saturating_mul(2).min(65536);
+            events = chat_openai_once(
+                &boosted,
+                api_key,
+                &base,
+                messages,
+                Some(ThinkingParam {
+                    kind: "disabled".into(),
+                }),
+            )
+            .await?;
+        }
+    }
+
+    let saw_reasoning = events.iter().any(|e| e.kind == "reasoning");
+    finalize_openai_events(events, saw_reasoning)
+}
+
+fn openai_needs_thinking_retry(events: &[StreamEvent]) -> bool {
+    let content_empty = !events
+        .iter()
+        .any(|e| e.kind == "delta" && !e.content.trim().is_empty());
+    let saw_reasoning = events.iter().any(|e| e.kind == "reasoning");
+    let finish_length = events
+        .iter()
+        .rev()
+        .find(|e| e.kind == "done")
+        .map(|e| e.content == "length")
+        .unwrap_or(false);
+    content_empty && (saw_reasoning || finish_length)
+}
+
+async fn chat_openai_once(
+    config: &AiConfig,
+    api_key: &str,
+    base: &str,
+    messages: Vec<ChatMessage>,
+    thinking: Option<ThinkingParam>,
+) -> DstResult<Vec<StreamEvent>> {
+    if chat_cancelled() {
+        return Err(cancelled_error());
+    }
     let url = format!("{base}/chat/completions");
+    // 强制关闭思考时始终带上字段（含重试路径），避免 V4 默认 enabled
     let body = OpenaiRequest {
         model: config.model.clone(),
         messages,
         temperature: temperature_for_request(&config.model, config.temperature),
-        max_tokens: config.max_tokens,
+        max_tokens: effective_max_tokens(base, &config.model, config.max_tokens),
         stream: true,
+        thinking,
     };
+    if body.thinking.as_ref().map(|t| t.kind.as_str()) == Some("disabled") {
+        log::info!(
+            "DeepSeek/兼容：请求已带 thinking=disabled，max_tokens={}",
+            body.max_tokens
+        );
+    }
 
     let client = reqwest::Client::new();
     let resp = client
@@ -129,7 +282,11 @@ async fn chat_openai(
         .json(&body)
         .send()
         .await
-        .map_err(|e| DstError::Http(e))?;
+        .map_err(DstError::Http)?;
+
+    if chat_cancelled() {
+        return Err(cancelled_error());
+    }
 
     if !resp.status().is_success() {
         let status = resp.status();
@@ -140,15 +297,16 @@ async fn chat_openai(
     let mut events = vec![];
     let mut stream = resp.bytes_stream();
     let mut buffer = String::new();
-    let mut saw_reasoning = false;
     let mut finish_reason = String::new();
 
     while let Some(chunk_result) = stream.next().await {
-        let chunk = chunk_result.map_err(|e| DstError::Http(e))?;
+        if chat_cancelled() {
+            return Err(cancelled_error());
+        }
+        let chunk = chunk_result.map_err(DstError::Http)?;
         let text = String::from_utf8_lossy(&chunk);
         buffer.push_str(&text);
 
-        // 解析 SSE：每行 "data: {...}" 或 "data: [DONE]"（兼容 data: 后无空格）
         while let Some(pos) = buffer.find('\n') {
             let line: String = buffer.drain(..=pos).collect();
             let line = line.trim().trim_end_matches('\r');
@@ -167,7 +325,7 @@ async fn chat_openai(
                     kind: "done".into(),
                     content: finish_reason.clone(),
                 });
-                return finalize_openai_events(events, saw_reasoning);
+                return Ok(events);
             }
             if let Ok(chunk) = serde_json::from_str::<OpenaiStreamChunk>(data) {
                 if let Some(choice) = chunk.choices.first() {
@@ -179,7 +337,6 @@ async fn chat_openai(
                     if let Some(delta) = choice.delta.as_ref() {
                         if let Some(r) = delta.reasoning_content.as_ref() {
                             if !r.is_empty() {
-                                saw_reasoning = true;
                                 events.push(StreamEvent {
                                     kind: "reasoning".into(),
                                     content: r.clone(),
@@ -199,11 +356,14 @@ async fn chat_openai(
             }
         }
     }
+    if chat_cancelled() {
+        return Err(cancelled_error());
+    }
     events.push(StreamEvent {
         kind: "done".into(),
         content: finish_reason,
     });
-    finalize_openai_events(events, saw_reasoning)
+    Ok(events)
 }
 
 /// 思考模型若把 token 耗在 reasoning 上，正文可能为空——直接报明确错误，避免前端“假中断”。
@@ -233,7 +393,7 @@ fn finalize_openai_events(
             .unwrap_or("");
         return Err(DstError::Other(format!(
             "模型只返回了思考过程、未产出正文（常见原因：思考模式占满 max_tokens）。\
-请将配置中的 max_tokens 调到 8192 以上，或关闭思考模式 / 改用非思考模型。\
+DeepSeek 请确认已使用官方端点（会自动关闭思考）；或将 max_tokens 调到 16384+。\
 finish_reason={finish}；思考预览：{preview}…"
         )));
     }
@@ -251,6 +411,9 @@ struct AnthropicRequest {
     temperature: Option<f64>,
     max_tokens: u32,
     stream: bool,
+    /// DeepSeek Anthropic 兼容端同样支持 thinking 开关
+    #[serde(skip_serializing_if = "Option::is_none")]
+    thinking: Option<ThinkingParam>,
 }
 
 #[derive(Deserialize)]
@@ -273,6 +436,9 @@ async fn chat_anthropic(
     api_key: &str,
     messages: Vec<ChatMessage>,
 ) -> DstResult<Vec<StreamEvent>> {
+    if chat_cancelled() {
+        return Err(cancelled_error());
+    }
     let url = format!("{}/messages", config.base_url.trim_end_matches('/'));
 
     // Anthropic 的 system 是顶层字段，不在 messages 里
@@ -286,13 +452,15 @@ async fn chat_anthropic(
         .filter(|m| m.role != "system")
         .collect();
 
+    let thinking = deepseek_disable_thinking(&config.base_url, &config.model);
     let body = AnthropicRequest {
         model: config.model.clone(),
         messages: user_messages,
         system,
         temperature: temperature_for_request(&config.model, config.temperature),
-        max_tokens: config.max_tokens,
+        max_tokens: effective_max_tokens(&config.base_url, &config.model, config.max_tokens),
         stream: true,
+        thinking,
     };
 
     let client = reqwest::Client::new();
@@ -303,7 +471,11 @@ async fn chat_anthropic(
         .json(&body)
         .send()
         .await
-        .map_err(|e| DstError::Http(e))?;
+        .map_err(DstError::Http)?;
+
+    if chat_cancelled() {
+        return Err(cancelled_error());
+    }
 
     if !resp.status().is_success() {
         let status = resp.status();
@@ -316,7 +488,10 @@ async fn chat_anthropic(
     let mut buffer = String::new();
 
     while let Some(chunk_result) = stream.next().await {
-        let chunk = chunk_result.map_err(|e| DstError::Http(e))?;
+        if chat_cancelled() {
+            return Err(cancelled_error());
+        }
+        let chunk = chunk_result.map_err(DstError::Http)?;
         let text = String::from_utf8_lossy(&chunk);
         buffer.push_str(&text);
 
@@ -515,9 +690,75 @@ mod tests {
             temperature: None,
             max_tokens: 1024,
             stream: true,
+            thinking: None,
         };
         let json = serde_json::to_string(&body).unwrap();
         assert!(!json.contains("temperature"));
+        assert!(!json.contains("thinking"));
+    }
+
+    #[test]
+    fn deepseek_request_disables_thinking() {
+        let t = deepseek_disable_thinking("https://api.deepseek.com/v1", "deepseek-chat").unwrap();
+        assert_eq!(t.kind, "disabled");
+        assert!(
+            deepseek_disable_thinking("https://api.moonshot.cn/v1", "moonshot-v1-8k").is_none()
+        );
+        assert!(
+            deepseek_disable_thinking("https://proxy.example/v1", "deepseek-chat").is_some()
+        );
+        let body = OpenaiRequest {
+            model: "deepseek-chat".into(),
+            messages: vec![],
+            temperature: Some(0.7),
+            max_tokens: 8192,
+            stream: true,
+            thinking: Some(t),
+        };
+        let json = serde_json::to_string(&body).unwrap();
+        assert!(json.contains("\"thinking\""));
+        assert!(json.contains("disabled"));
+    }
+
+    #[test]
+    fn thinking_reject_detects_400() {
+        let e = DstError::Other(
+            "OpenAI 返回 400: {\"error\":{\"message\":\"unknown field thinking\"}}".into(),
+        );
+        assert!(is_thinking_param_rejected(&e));
+        let e2 = DstError::Other("OpenAI 返回 401: invalid api key".into());
+        assert!(!is_thinking_param_rejected(&e2));
+    }
+
+    #[test]
+    fn deepseek_max_tokens_floor() {
+        assert_eq!(
+            effective_max_tokens("https://api.deepseek.com/v1", "deepseek-chat", 2048),
+            16384
+        );
+        assert_eq!(
+            effective_max_tokens("https://api.moonshot.cn/v1", "moonshot-v1-8k", 2048),
+            2048
+        );
+        assert_eq!(
+            effective_max_tokens("https://proxy.example/v1", "deepseek-v4-flash", 4096),
+            16384
+        );
+    }
+
+    #[test]
+    fn needs_retry_on_reasoning_length() {
+        let events = vec![
+            StreamEvent {
+                kind: "reasoning".into(),
+                content: "分析中".into(),
+            },
+            StreamEvent {
+                kind: "done".into(),
+                content: "length".into(),
+            },
+        ];
+        assert!(openai_needs_thinking_retry(&events));
     }
 
     #[test]

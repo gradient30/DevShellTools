@@ -15,12 +15,16 @@ pub struct CategoryInfo {
 struct CategoryCache {
     stamp: u64,
     data: Vec<CategoryInfo>,
+    /// Help.ps1 等无分类块文件中的导出函数（如 dsh）
+    extras: Vec<PsFunction>,
 }
 
 #[derive(serde::Serialize, serde::Deserialize)]
 struct DiskCategoryCache {
     stamp: u64,
     categories: Vec<CategoryInfo>,
+    #[serde(default)]
+    extras: Vec<PsFunction>,
 }
 
 static CATEGORY_CACHE: Mutex<Option<CategoryCache>> = Mutex::new(None);
@@ -61,13 +65,14 @@ fn public_stamp() -> u64 {
     max.wrapping_mul(1_000_003).wrapping_add(count)
 }
 
-fn prime_category_cache(data: &[CategoryInfo]) {
+fn prime_category_cache_with_extras(data: &[CategoryInfo], extras: &[PsFunction]) {
     let stamp = public_stamp();
-    let _ = save_disk_cache(stamp, data);
+    let _ = save_disk_cache(stamp, data, extras);
     if let Ok(mut g) = CATEGORY_CACHE.lock() {
         *g = Some(CategoryCache {
             stamp,
             data: data.to_vec(),
+            extras: extras.to_vec(),
         });
     }
 }
@@ -98,26 +103,46 @@ fn scan_public_once() -> DstResult<(Vec<CategoryInfo>, Vec<PsFunction>)> {
     Ok((cats, extras))
 }
 
-fn load_disk_cache(stamp: u64) -> Option<Vec<CategoryInfo>> {
+fn load_disk_cache(stamp: u64) -> Option<(Vec<CategoryInfo>, Vec<PsFunction>)> {
     let path = disk_cache_path();
     let content = std::fs::read_to_string(path).ok()?;
     let cache: DiskCategoryCache = serde_json::from_str(&content).ok()?;
     if cache.stamp == stamp {
-        Some(cache.categories)
+        Some((cache.categories, cache.extras))
     } else {
         None
     }
 }
 
-fn save_disk_cache(stamp: u64, data: &[CategoryInfo]) -> DstResult<()> {
+fn save_disk_cache(stamp: u64, data: &[CategoryInfo], extras: &[PsFunction]) -> DstResult<()> {
     let _ = std::fs::create_dir_all(workspace::studio_dir());
     let cache = DiskCategoryCache {
         stamp,
         categories: data.to_vec(),
+        extras: extras.to_vec(),
     };
     let json = serde_json::to_string(&cache)?;
     std::fs::write(disk_cache_path(), json)?;
     Ok(())
+}
+
+/// 增量补丁用快照：忽略 stamp（刚写入的文件会令 mtime/stamp 变化）。
+/// 无有效 extras 时返回 None，迫使全量扫描。
+fn snapshot_for_patch() -> Option<(Vec<CategoryInfo>, Vec<PsFunction>)> {
+    if let Ok(g) = CATEGORY_CACHE.lock() {
+        if let Some(c) = g.as_ref() {
+            if !c.extras.is_empty() {
+                return Some((c.data.clone(), c.extras.clone()));
+            }
+        }
+    }
+    let path = disk_cache_path();
+    let content = std::fs::read_to_string(path).ok()?;
+    let cache: DiskCategoryCache = serde_json::from_str(&content).ok()?;
+    if cache.extras.is_empty() {
+        return None;
+    }
+    Some((cache.categories, cache.extras))
 }
 
 pub fn invalidate_category_cache() {
@@ -137,24 +162,26 @@ pub fn scan_categories_cached_with_meta() -> DstResult<(Vec<CategoryInfo>, bool)
             }
         }
     }
-    if let Some(data) = load_disk_cache(stamp) {
+    if let Some((data, extras)) = load_disk_cache(stamp) {
         if let Ok(mut g) = CATEGORY_CACHE.lock() {
             *g = Some(CategoryCache {
                 stamp,
                 data: data.clone(),
+                extras,
             });
         }
         return Ok((data, true));
     }
-    let data = scan_categories()?;
-    let _ = save_disk_cache(stamp, &data);
+    let (cats, extras) = scan_public_once()?;
+    let _ = save_disk_cache(stamp, &cats, &extras);
     if let Ok(mut g) = CATEGORY_CACHE.lock() {
         *g = Some(CategoryCache {
             stamp,
-            data: data.clone(),
+            data: cats.clone(),
+            extras,
         });
     }
-    Ok((data, false))
+    Ok((cats, false))
 }
 
 /// 扫描工作区 Public/ 下所有 .ps1 文件，返回分类列表（内存 + 磁盘 mtime 缓存）。
@@ -205,31 +232,104 @@ pub fn filter_public_functions(functions: &[crate::ps_parser::PsFunction]) -> Ve
         .collect()
 }
 
+fn export_names_from(cats: &[CategoryInfo], extras: &[PsFunction]) -> Vec<String> {
+    let mut v: Vec<String> = cats
+        .iter()
+        .flat_map(|c| {
+            c.functions
+                .iter()
+                .filter(|f| is_exported(&f.name))
+                .map(|f| f.name.clone())
+        })
+        .chain(
+            extras
+                .iter()
+                .filter(|f| is_exported(&f.name))
+                .map(|f| f.name.clone()),
+        )
+        .collect();
+    v.sort();
+    v.dedup();
+    v
+}
+
+fn write_generated_files(cats: &[CategoryInfo], extras: &[PsFunction]) -> DstResult<()> {
+    let all_names = export_names_from(cats, extras);
+    let psd1 = regenerate_psd1(&all_names)?;
+    let psm1 = regenerate_psm1(&all_names)?;
+    let help = regenerate_help_ps1(cats, extras)?;
+    workspace::write_module_manifest(&psd1)?;
+    workspace::write_module_loader(&psm1)?;
+    workspace::write_file("Public/Help.ps1", &help)?;
+    prime_category_cache_with_extras(cats, extras);
+    Ok(())
+}
+
 /// 重生成所有公共部分文件。原子操作：全部成功才写盘，失败回滚不写。
 /// 只启动一次 PowerShell 批量解析；完成后回填分类缓存（避免紧接着 list_categories 再扫一遍）。
 pub fn regenerate_all() -> DstResult<()> {
     let (cats, extras) = scan_public_once()?;
-    let all_names = {
-        let mut v: Vec<String> = cats
-            .iter()
-            .flat_map(|c| c.functions.iter().filter(|f| is_exported(&f.name)).map(|f| f.name.clone()))
-            .chain(extras.iter().filter(|f| is_exported(&f.name)).map(|f| f.name.clone()))
-            .collect();
-        v.sort();
-        v.dedup();
-        v
+    write_generated_files(&cats, &extras)
+}
+
+/// 用已解析结果补丁缓存并重写公共部分（零额外 PowerShell）。
+/// `parsed=None` 表示文件已删除。
+pub fn regenerate_with_parsed(
+    file_name: &str,
+    parsed: Option<ps_parser::ParsedPsFile>,
+) -> DstResult<()> {
+    let file_name = file_name
+        .trim()
+        .trim_start_matches("Public/")
+        .trim_start_matches("Public\\");
+    let Some((mut cats, extras)) = snapshot_for_patch() else {
+        return regenerate_all();
     };
 
-    let psd1 = regenerate_psd1(&all_names)?;
-    let psm1 = regenerate_psm1(&all_names)?;
-    let help = regenerate_help_ps1(&cats, &extras)?;
+    match parsed {
+        Some(p) => {
+            if let Some(cat) = p.category {
+                let info = CategoryInfo {
+                    file_name: file_name.to_string(),
+                    category: cat,
+                    functions: p.functions,
+                };
+                if let Some(slot) = cats
+                    .iter_mut()
+                    .find(|c| c.file_name.eq_ignore_ascii_case(file_name))
+                {
+                    *slot = info;
+                } else {
+                    cats.push(info);
+                    cats.sort_by(|a, b| a.category.name.cmp(&b.category.name));
+                }
+            } else {
+                cats.retain(|c| !c.file_name.eq_ignore_ascii_case(file_name));
+            }
+        }
+        None => {
+            cats.retain(|c| !c.file_name.eq_ignore_ascii_case(file_name));
+        }
+    }
 
-    workspace::write_module_manifest(&psd1)?;
-    workspace::write_module_loader(&psm1)?;
-    workspace::write_file("Public/Help.ps1", &help)?;
-    // Help.ps1 已从 stamp 排除，此处可安全回填缓存
-    prime_category_cache(&cats);
-    Ok(())
+    write_generated_files(&cats, &extras)
+}
+
+/// 单文件变更后的增量再生：只解析该 .ps1，其余沿用缓存。
+pub fn regenerate_after_file_change(file_name: &str) -> DstResult<()> {
+    let file_name = file_name
+        .trim()
+        .trim_start_matches("Public/")
+        .trim_start_matches("Public\\");
+    let path = workspace::workspace_root().join("Public").join(file_name);
+    if !path.exists() {
+        return regenerate_with_parsed(file_name, None);
+    }
+    let content = std::fs::read_to_string(&path).map_err(|e| {
+        crate::error::DstError::Other(format!("读取 {file_name} 失败：{e}"))
+    })?;
+    let parsed = ps_parser::parse_ps1(&content)?;
+    regenerate_with_parsed(file_name, Some(parsed))
 }
 
 const PSD1_TEMPLATE: &str = include_str!("../../templates/DevShellTools.psd1");

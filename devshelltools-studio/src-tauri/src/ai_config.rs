@@ -169,10 +169,15 @@ pub fn load_profiles_store() -> DstResult<AiProfilesStore> {
     let mut bumped = false;
     for p in &mut store.profiles {
         p.key_configured = key_file_for(&p.id).exists();
-        // 旧默认 2048 在 DeepSeek 思考模式下易导致“只思考无正文”；自动抬到 8192
-        if p.max_tokens > 0 && p.max_tokens <= 2048 {
-            p.max_tokens = 8192;
-            bumped = true;
+        // 旧默认 2048/8192 在 DeepSeek 思考模式下易导致“只思考无正文”；抬到 16384
+        if p.max_tokens > 0 && p.max_tokens < 16384 {
+            let is_deepseek = p.base_url.to_lowercase().contains("deepseek")
+                || p.model.to_lowercase().contains("deepseek");
+            let new_cap = if is_deepseek { 16384 } else if p.max_tokens <= 2048 { 8192 } else { p.max_tokens };
+            if new_cap > p.max_tokens {
+                p.max_tokens = new_cap;
+                bumped = true;
+            }
         }
     }
     if bumped {

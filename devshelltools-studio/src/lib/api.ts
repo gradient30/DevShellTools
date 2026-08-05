@@ -109,6 +109,12 @@ export interface MigrationCheck {
   workspace_initialized: boolean;
 }
 
+export interface MigrateResult {
+  migrated_files: string[];
+  archived_dirs: string[];
+  message: string;
+}
+
 export interface Webview2Status {
   installed: boolean;
   version: string;
@@ -232,13 +238,15 @@ export const api = {
     }),
   aiChat: (messages: ChatMessage[], profileId?: string) =>
     invoke<string>("ai_chat", { messages, profileId: profileId ?? null }),
+  /** 中断进行中的 AI 请求 */
+  aiCancelChat: () => invoke<void>("ai_cancel_chat"),
   aiChatWithValidation: (messages: ChatMessage[], profileId?: string) =>
     invoke<AiChatResult>("ai_chat_with_validation", {
       messages,
       profileId: profileId ?? null
     }),
   checkMigration: () => invoke<MigrationCheck>("check_migration"),
-  migrateLegacy: () => invoke<string[]>("migrate_legacy"),
+  migrateLegacy: () => invoke<MigrateResult>("migrate_legacy"),
   exportWorkspace: (targetDir: string) => invoke<string[]>("export_workspace", { targetDir }),
   importWorkspace: (sourceDir: string) => invoke<ImportResult>("import_workspace", { sourceDir }),
   listLogs: () => invoke<string[]>("list_logs"),

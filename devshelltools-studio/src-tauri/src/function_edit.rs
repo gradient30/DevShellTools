@@ -185,11 +185,10 @@ $enc = New-Object System.Text.UTF8Encoding $true
 
     let content = workspace::read_file(&rel)?;
     assert_safety_ok(safety::check(&content)?)?;
-    // 块已校验；整文件仅做轻量语法检查（避免再走完整 AST+GetHelpContent）
-    ps_parser::validate_syntax(&content)?;
-    sync::regenerate_all()?; // 内部已回填分类缓存
+    let parsed = ps_parser::parse_ps1(&content)?;
+    sync::regenerate_with_parsed(file_name, Some(parsed))?;
     workspace::touch_last_sync()?;
-    let _ = crate::install_mgr::sync_runtime_modules();
+    crate::install_mgr::spawn_sync_runtime_modules();
     Ok(())
 }
 
@@ -220,9 +219,11 @@ $enc = New-Object System.Text.UTF8Encoding $true
 "#,
     );
     run_ps_script(&script)?;
-    sync::regenerate_all()?;
+    let content = workspace::read_file(&rel)?;
+    let parsed = ps_parser::parse_ps1(&content)?;
+    sync::regenerate_with_parsed(file_name, Some(parsed))?;
     workspace::touch_last_sync()?;
-    let _ = crate::install_mgr::sync_runtime_modules();
+    crate::install_mgr::spawn_sync_runtime_modules();
     Ok(())
 }
 
@@ -286,7 +287,7 @@ pub fn apply_code_to_category(
     if !report.ok {
         return Err(DstError::SafetyBlocked(report.violations.join("; ")));
     }
-    ps_parser::validate_syntax(code)?;
+    // parse_ps1 已含语法错误检查，无需再 validate_syntax
     let parsed = ps_parser::parse_ps1(code)?;
     let names: Vec<String> = parsed
         .functions
@@ -355,9 +356,9 @@ $enc = New-Object System.Text.UTF8Encoding $true
 
     let content = workspace::read_file(&rel)?;
     assert_safety_ok(safety::check(&content)?)?;
-    ps_parser::validate_syntax(&content)?;
-    sync::regenerate_all()?;
+    let file_parsed = ps_parser::parse_ps1(&content)?;
+    sync::regenerate_with_parsed(file_name, Some(file_parsed))?;
     workspace::touch_last_sync()?;
-    let _ = crate::install_mgr::sync_runtime_modules();
+    crate::install_mgr::spawn_sync_runtime_modules();
     Ok(names)
 }

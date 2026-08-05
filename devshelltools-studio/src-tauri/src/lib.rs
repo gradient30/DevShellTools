@@ -71,6 +71,7 @@ pub fn run() {
             commands::fetch_ai_models,
             commands::fetch_ai_models_preview,
             commands::ai_chat,
+            commands::ai_cancel_chat,
             commands::ai_chat_with_validation,
             commands::check_migration,
             commands::migrate_legacy,

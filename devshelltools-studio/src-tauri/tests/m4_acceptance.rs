@@ -15,7 +15,71 @@ mod tests {
     fn m4_migration_check_struct() {
         let _g = IsolatedProfile::new("m4");
         let check = migrate::check_migration();
-        assert!(check.legacy_dirs.len() <= 3, "最多 3 个旧版目录");
+        assert!(check.legacy_dirs.len() <= 3, "最多 3 个待处理来源");
+    }
+
+    /// 验收：迁移后旧沙箱归档，且不再提示 has_legacy（隔离环境下无真实旧目录时跳过归档断言）
+    #[test]
+    fn m4_migrate_clears_sandbox_when_present() {
+        let _g = IsolatedProfile::new("m4-migrate");
+        devshelltools_studio_lib::workspace::init_from_template().expect("init");
+        let docs = std::env::var("USERPROFILE")
+            .map(std::path::PathBuf::from)
+            .unwrap()
+            .join("Documents");
+        let sandbox = docs.join("DevShellTools");
+        let _ = std::fs::remove_dir_all(&sandbox);
+        std::fs::create_dir_all(sandbox.join("Public")).unwrap();
+        std::fs::write(
+            sandbox.join("DevShellTools.psd1"),
+            "@{ ModuleVersion = '0.0.1' }",
+        )
+        .unwrap();
+        std::fs::write(
+            sandbox.join("Public").join("LegacyOnly.ps1"),
+            r#"
+# @DST-Category
+# Name: legacyonly
+# Title: 旧版
+# Description: 迁移验收
+# Aliases:
+# @DST-Category-End
+function legacyonly {
+<#
+.SYNOPSIS
+迁移验收命令。
+.EXAMPLE
+legacyonly
+#>
+    [CmdletBinding()] param()
+    "ok"
+}
+"#,
+        )
+        .unwrap();
+
+        let before = migrate::check_migration();
+        assert!(before.has_legacy, "应检测到旧沙箱");
+
+        let result = migrate::migrate_from_legacy().expect("migrate");
+        assert!(
+            result.migrated_files.iter().any(|f| f == "LegacyOnly.ps1"),
+            "应迁入 LegacyOnly.ps1：{:?}",
+            result.migrated_files
+        );
+        assert!(!sandbox.exists(), "旧沙箱应已归档：{}", sandbox.display());
+        assert!(
+            !result.archived_dirs.is_empty(),
+            "应返回归档路径：{:?}",
+            result
+        );
+
+        let after = migrate::check_migration();
+        assert!(
+            !after.has_legacy,
+            "迁移清理后不应再提示旧版：{:?}",
+            after.legacy_dirs
+        );
     }
 
     /// 验收2：导出/导入 round-trip

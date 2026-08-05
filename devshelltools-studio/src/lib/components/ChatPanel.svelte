@@ -1,6 +1,7 @@
 <script lang="ts">
-  import { onMount } from "svelte";
+  import { onMount, tick } from "svelte";
   import { api, type AiProfile, type CategoryInfo, type ChatMessage, type ValidatedCodeBlock } from "../api";
+  import { showToast } from "../stores/toast";
 
   let {
     categories,
@@ -16,9 +17,12 @@
     onOpenSettings: () => void;
   } = $props();
 
+  /** 带稳定 id 的 UI 消息（发往 API 时剥掉 id） */
+  type UiMessage = ChatMessage & { id: string };
+
   let profiles = $state<AiProfile[]>([]);
   let profileId = $state("");
-  let messages = $state<ChatMessage[]>([]);
+  let messages = $state<UiMessage[]>([]);
   let input = $state("");
   let loading = $state(false);
   let errMsg = $state<string | null>(null);
@@ -28,17 +32,29 @@
   let expandedBlocks = $state<Set<string>>(new Set());
   let lastAutoToken = $state(0);
   let profilesReady = $state(false);
-  /** 编辑/回退进入发送框时的会话快照，用于「取消」恢复 */
-  let draftSnapshot = $state<{
-    messages: ChatMessage[];
+
+  /** 就地编辑：正在编辑的用户消息 id；null 表示未在编辑 */
+  let editingId = $state<string | null>(null);
+  let editText = $state("");
+  /** 回退后可「取消回退」恢复的快照 */
+  let rewindBackup = $state<{
+    messages: UiMessage[];
     replyCodeBlocks: Record<number, ValidatedCodeBlock[]>;
     targetFiles: Record<string, string>;
     expandedBlocks: string[];
     input: string;
   } | null>(null);
-  let draftMode = $state<"edit" | "rewind" | null>(null);
 
-  /** 加载配置列表，并始终对齐设置页的默认 Profile */
+  let msgSeq = 0;
+  function newId(role: string): string {
+    msgSeq += 1;
+    return `${role}-${msgSeq}-${Date.now()}`;
+  }
+
+  function toApiMessages(list: UiMessage[]): ChatMessage[] {
+    return list.map(({ role, content }) => ({ role, content }));
+  }
+
   async function loadProfiles(syncDefault = true) {
     const meta = await api.getAiProfilesMeta();
     profiles = meta.profiles;
@@ -48,7 +64,6 @@
       profileId = defaultId!;
       return;
     }
-    // 默认无效时：保留当前选择（若仍存在），否则回退到已配 Key / 首项
     if (profileId && profiles.some((p) => p.id === profileId)) return;
     profileId =
       (defaultExists ? defaultId! : null) ??
@@ -66,7 +81,6 @@
       } finally {
         profilesReady = true;
       }
-      if (initialPrompt && !autoSendToken) input = initialPrompt;
     })();
 
     const onConfigChanged = () => {
@@ -78,37 +92,51 @@
     return () => window.removeEventListener("ai-config-changed", onConfigChanged);
   });
 
+  // 仅响应「命令列表 → AI审阅」的 token，不与编辑/回退共享 effect，避免状态被冲掉
   $effect(() => {
-    if (!profilesReady || !profileId) return;
-    if (autoSendToken > 0 && autoSendToken !== lastAutoToken && initialPrompt.trim()) {
-      lastAutoToken = autoSendToken;
-      messages = [];
-      replyCodeBlocks = {};
-      targetFiles = {};
-      expandedBlocks = new Set();
-      clearDraftState();
-      void sendPrompt(initialPrompt.trim());
-      return;
-    }
-    // 编辑/回退草稿中禁止用 initialPrompt 覆盖发送框（否则点「编辑」像没反应）
-    if (draftMode) return;
-    if (initialPrompt && messages.length === 0 && !loading && !input.trim()) {
-      input = initialPrompt;
-    }
+    const token = autoSendToken;
+    const ready = profilesReady;
+    const pid = profileId;
+    if (!ready || !pid) return;
+    if (token <= 0 || token === lastAutoToken) return;
+    lastAutoToken = token;
+    const prompt = initialPrompt.trim();
+    if (!prompt) return;
+    editingId = null;
+    editText = "";
+    rewindBackup = null;
+    replyCodeBlocks = {};
+    targetFiles = {};
+    expandedBlocks = new Set();
+    input = "";
+    void sendPrompt(prompt, { replaceAll: true });
   });
 
-  async function sendPrompt(text: string) {
-    if (!text || loading || !profileId) return;
-    const userMsg: ChatMessage = { role: "user", content: text };
-    messages = [...messages, userMsg];
+  async function sendPrompt(text: string, opts?: { replaceAll?: boolean }) {
+    const trimmed = text.trim();
+    if (!trimmed || loading || !profileId) return;
+
+    if (opts?.replaceAll) {
+      messages = [{ id: newId("user"), role: "user", content: trimmed }];
+    } else {
+      messages = [...messages, { id: newId("user"), role: "user", content: trimmed }];
+    }
+
     input = "";
-    clearDraftState();
+    editingId = null;
+    editText = "";
+    rewindBackup = null;
     loading = true;
     errMsg = null;
+
+    const apiMessages = toApiMessages(messages);
     try {
-      const result = await api.aiChatWithValidation(messages, profileId);
+      const result = await api.aiChatWithValidation(apiMessages, profileId);
       const assistantIdx = messages.length;
-      messages = [...messages, { role: "assistant", content: result.reply }];
+      messages = [
+        ...messages,
+        { id: newId("assistant"), role: "assistant", content: result.reply }
+      ];
       if (result.code_blocks.length > 0) {
         replyCodeBlocks[assistantIdx] = result.code_blocks;
         result.code_blocks.forEach((block, bi) => {
@@ -119,18 +147,131 @@
             targetFiles[`${assistantIdx}-${bi}`] = categories[0]?.file_name ?? "";
           }
         });
-        // 同命令迭代：收起旧稿，仅展开有变更的最新脚本框
         focusLatestBlocks(assistantIdx, result.code_blocks);
       }
     } catch (e) {
-      errMsg = String(e);
+      const msg = String(e);
+      if (!msg.includes("已停止生成")) errMsg = msg;
     } finally {
       loading = false;
     }
   }
 
   async function send() {
-    await sendPrompt(input.trim());
+    await sendPrompt(input);
+  }
+
+  async function stopGeneration() {
+    if (!loading) return;
+    try {
+      await api.aiCancelChat();
+    } catch {
+      /* ignore */
+    }
+  }
+
+  function truncateFrom(index: number) {
+    messages = messages.slice(0, index);
+    const nextBlocks: Record<number, ValidatedCodeBlock[]> = {};
+    Object.entries(replyCodeBlocks).forEach(([k, v]) => {
+      const n = parseInt(k, 10);
+      if (!Number.isNaN(n) && n < index) nextBlocks[n] = v;
+    });
+    replyCodeBlocks = nextBlocks;
+    const nextTargets: Record<string, string> = {};
+    Object.entries(targetFiles).forEach(([k, v]) => {
+      const msgIdx = parseInt(k.split("-")[0] ?? "", 10);
+      if (!Number.isNaN(msgIdx) && msgIdx < index) nextTargets[k] = v;
+    });
+    targetFiles = nextTargets;
+    expandedBlocks = new Set(
+      [...expandedBlocks].filter((k) => {
+        const msgIdx = parseInt(k.split("-")[0] ?? "", 10);
+        return Number.isNaN(msgIdx) || msgIdx < index;
+      })
+    );
+  }
+
+  /** 就地编辑：不删消息，在气泡内改写 */
+  async function beginEdit(index: number) {
+    if (loading) {
+      showToast("请先停止当前生成，再编辑", "info", 2500);
+      return;
+    }
+    const m = messages[index];
+    if (!m || m.role !== "user") return;
+    editingId = m.id;
+    editText = m.content;
+    rewindBackup = null;
+    errMsg = null;
+    showToast("已进入编辑，改完后点「重新发送」", "info", 2500);
+    await tick();
+    const el = document.getElementById(`dst-edit-${m.id}`) as HTMLTextAreaElement | null;
+    el?.focus();
+    el?.scrollIntoView({ block: "nearest" });
+  }
+
+  function cancelEdit() {
+    editingId = null;
+    editText = "";
+  }
+
+  /** 用编辑后的文本截断并重发 */
+  async function confirmEditResend() {
+    if (loading || !editingId) return;
+    const idx = messages.findIndex((m) => m.id === editingId);
+    if (idx < 0) {
+      cancelEdit();
+      return;
+    }
+    const text = editText.trim();
+    if (!text) {
+      showToast("内容不能为空", "error", 2000);
+      return;
+    }
+    truncateFrom(idx);
+    editingId = null;
+    editText = "";
+    showToast("正在按修改后的提示重新发送…", "info", 2000);
+    await sendPrompt(text);
+  }
+
+  /** 回退到此：删掉该条及之后，原文放入底部输入框待重发 */
+  async function rewindTo(index: number) {
+    if (loading) {
+      showToast("请先停止当前生成，再回退", "info", 2500);
+      return;
+    }
+    const m = messages[index];
+    if (!m || m.role !== "user") return;
+    rewindBackup = {
+      messages: messages.map((x) => ({ ...x })),
+      replyCodeBlocks: structuredClone(replyCodeBlocks),
+      targetFiles: { ...targetFiles },
+      expandedBlocks: [...expandedBlocks],
+      input
+    };
+    editingId = null;
+    editText = "";
+    truncateFrom(index);
+    input = m.content;
+    errMsg = null;
+    showToast("已回退：修改底部内容后发送，或点「取消回退」", "info", 3500);
+    await tick();
+    const el = document.getElementById("dst-chat-input") as HTMLTextAreaElement | null;
+    el?.focus();
+    el?.scrollIntoView({ block: "nearest" });
+  }
+
+  function cancelRewind() {
+    if (!rewindBackup) return;
+    messages = rewindBackup.messages;
+    replyCodeBlocks = rewindBackup.replyCodeBlocks;
+    targetFiles = rewindBackup.targetFiles;
+    expandedBlocks = new Set(rewindBackup.expandedBlocks);
+    input = rewindBackup.input;
+    rewindBackup = null;
+    showToast("已取消回退，对话已恢复", "info", 2000);
   }
 
   async function apply(block: ValidatedCodeBlock, key: string) {
@@ -160,7 +301,6 @@
     return block.syntax_ok && block.safety_ok && block.functions.length > 0;
   }
 
-  /** 用函数名标识「同一脚本」；无函数名则各块独立（不同匿名脚本都展示） */
   function scriptIdentity(block: ValidatedCodeBlock): string | null {
     if (block.functions.length === 0) return null;
     return [...block.functions].map((f) => f.toLowerCase()).sort().join(",");
@@ -170,7 +310,6 @@
     return code.replace(/\r\n/g, "\n").trim();
   }
 
-  /** 各脚本身份 → 对话中最新代码块 key（msgIdx-blockIdx） */
   let latestKeyByScript = $derived.by(() => {
     const map = new Map<string, string>();
     const idxs = Object.keys(replyCodeBlocks)
@@ -242,79 +381,6 @@
     expandedBlocks = next;
   }
 
-  function captureSnapshot() {
-    return {
-      messages: messages.map((m) => ({ ...m })),
-      replyCodeBlocks: structuredClone(replyCodeBlocks),
-      targetFiles: { ...targetFiles },
-      expandedBlocks: [...expandedBlocks],
-      input
-    };
-  }
-
-  function truncateFrom(index: number) {
-    messages = messages.slice(0, index);
-    Object.keys(replyCodeBlocks).forEach((k) => {
-      if (parseInt(k, 10) >= index) delete replyCodeBlocks[parseInt(k, 10)];
-    });
-    replyCodeBlocks = { ...replyCodeBlocks };
-    Object.keys(targetFiles).forEach((k) => {
-      const msgIdx = parseInt(k.split("-")[0] ?? "", 10);
-      if (!Number.isNaN(msgIdx) && msgIdx >= index) delete targetFiles[k];
-    });
-    targetFiles = { ...targetFiles };
-    expandedBlocks = new Set([...expandedBlocks].filter((k) => {
-      const msgIdx = parseInt(k.split("-")[0] ?? "", 10);
-      return Number.isNaN(msgIdx) || msgIdx < index;
-    }));
-  }
-
-  function focusComposer() {
-    queueMicrotask(() => {
-      const el = document.getElementById("dst-chat-input") as HTMLInputElement | null;
-      el?.focus();
-      el?.scrollIntoView({ block: "nearest" });
-    });
-  }
-
-  /** 回退：截断该条及之后，内容进入发送框，可取消恢复 */
-  function rewindTo(index: number, content: string) {
-    if (!draftSnapshot) draftSnapshot = captureSnapshot();
-    draftMode = "rewind";
-    truncateFrom(index);
-    input = content;
-    focusComposer();
-  }
-
-  /** 编辑：同回退，语义上强调改写后重发 */
-  function editUserMessage(index: number, content: string) {
-    if (!draftSnapshot) draftSnapshot = captureSnapshot();
-    draftMode = "edit";
-    truncateFrom(index);
-    input = content;
-    focusComposer();
-  }
-
-  function cancelDraft() {
-    if (!draftSnapshot) {
-      draftMode = null;
-      input = "";
-      return;
-    }
-    messages = draftSnapshot.messages;
-    replyCodeBlocks = draftSnapshot.replyCodeBlocks;
-    targetFiles = draftSnapshot.targetFiles;
-    expandedBlocks = new Set(draftSnapshot.expandedBlocks);
-    input = draftSnapshot.input;
-    draftSnapshot = null;
-    draftMode = null;
-  }
-
-  function clearDraftState() {
-    draftSnapshot = null;
-    draftMode = null;
-  }
-
   function textWithoutCode(text: string): string {
     return text.replace(/```[\s\S]*?```/g, "").trim();
   }
@@ -325,19 +391,24 @@
     <div class="flex items-center gap-2 min-w-0">
       <span class="text-lg">🤖</span>
       <h3 class="text-sm font-semibold text-cyan-300 shrink-0">AI 助手</h3>
-      <select bind:value={profileId} class="text-xs bg-slate-800 border border-slate-700 rounded px-2 py-1 text-slate-200 max-w-[180px]">
+      <select
+        bind:value={profileId}
+        class="text-xs bg-slate-800 border border-slate-700 rounded px-2 py-1 text-slate-200 max-w-[180px]"
+        disabled={loading}>
         {#each profiles as p (p.id)}
           <option value={p.id}>{p.name} · {p.model}</option>
         {/each}
       </select>
     </div>
-    <button class="text-xs text-slate-400 hover:text-slate-200 shrink-0" onclick={onOpenSettings}>配置</button>
+    <button type="button" class="text-xs text-slate-400 hover:text-slate-200 shrink-0" onclick={onOpenSettings}>
+      配置
+    </button>
   </div>
 
   {#if errMsg}
-    <div class="px-4 py-2 bg-red-900/40 border-b border-red-700 text-red-200 text-xs flex justify-between">
-      <span>{errMsg}</span>
-      <button class="text-red-300" onclick={() => (errMsg = null)}>×</button>
+    <div class="px-4 py-2 bg-red-900/40 border-b border-red-700 text-red-200 text-xs flex justify-between gap-2">
+      <span class="break-words min-w-0">{errMsg}</span>
+      <button type="button" class="text-red-300 shrink-0" onclick={() => (errMsg = null)}>×</button>
     </div>
   {/if}
 
@@ -350,39 +421,68 @@
       </div>
     {/if}
 
-    {#each messages as m, i (i)}
+    {#each messages as m, i (m.id)}
       {#if m.role === "user"}
-        <div class="flex justify-end gap-2 group">
-          <div class="flex flex-col items-end gap-1 max-w-[80%]">
-            <div class="bg-cyan-700/40 rounded-lg rounded-tr-sm px-3 py-2 text-sm text-cyan-50 whitespace-pre-wrap break-words">
-              {m.content}
-            </div>
-            <div class="flex gap-2">
-              <button
-                type="button"
-                class="text-xs text-slate-400 hover:text-cyan-300 disabled:opacity-40 underline-offset-2 hover:underline"
-                disabled={loading}
-                onclick={(e) => {
-                  e.preventDefault();
-                  e.stopPropagation();
-                  editUserMessage(i, m.content);
-                }}>编辑</button>
-              <button
-                type="button"
-                class="text-xs text-slate-400 hover:text-amber-300 disabled:opacity-40 underline-offset-2 hover:underline"
-                disabled={loading}
-                onclick={(e) => {
-                  e.preventDefault();
-                  e.stopPropagation();
-                  rewindTo(i, m.content);
-                }}>回退到此</button>
-            </div>
+        <div class="flex justify-end gap-2" data-msg-id={m.id}>
+          <div class="flex flex-col items-end gap-1.5 max-w-[85%] min-w-0 w-full">
+            {#if editingId === m.id}
+              <!-- 就地编辑：气泡内改写，不依赖底部输入框 -->
+              <div class="w-full rounded-lg border-2 border-amber-500/80 bg-slate-900 p-2 space-y-2">
+                <p class="text-xs text-amber-300 px-1">编辑此条提示词，确认后将删除其后的回复并重新发送</p>
+                <textarea
+                  id="dst-edit-{m.id}"
+                  bind:value={editText}
+                  rows={8}
+                  class="w-full px-3 py-2 text-sm bg-slate-950 border border-amber-700/50 rounded-lg text-slate-100 focus:outline-none focus:border-amber-500 resize-y min-h-[8rem]"
+                  disabled={loading}></textarea>
+                <div class="flex gap-2 justify-end">
+                  <button
+                    type="button"
+                    class="px-3 py-1.5 text-xs bg-slate-700 hover:bg-slate-600 rounded"
+                    onclick={cancelEdit}
+                    disabled={loading}>
+                    取消
+                  </button>
+                  <button
+                    type="button"
+                    class="px-3 py-1.5 text-xs bg-cyan-600 hover:bg-cyan-500 rounded disabled:opacity-50"
+                    onclick={confirmEditResend}
+                    disabled={loading || !editText.trim()}>
+                    重新发送
+                  </button>
+                </div>
+              </div>
+            {:else}
+              <div class="bg-cyan-700/40 rounded-lg rounded-tr-sm px-3 py-2 text-sm text-cyan-50 whitespace-pre-wrap break-words max-h-64 overflow-y-auto">
+                {m.content}
+              </div>
+              <div class="flex gap-2 items-center relative z-10">
+                <button
+                  type="button"
+                  class="px-2.5 py-1 text-xs rounded bg-slate-800 border border-cyan-600/60 text-cyan-300 hover:bg-cyan-900/40 hover:border-cyan-400 disabled:opacity-40"
+                  disabled={loading || editingId !== null}
+                  onclick={() => beginEdit(i)}>
+                  编辑
+                </button>
+                <button
+                  type="button"
+                  class="px-2.5 py-1 text-xs rounded bg-slate-800 border border-amber-600/60 text-amber-300 hover:bg-amber-900/40 hover:border-amber-400 disabled:opacity-40"
+                  disabled={loading || editingId !== null}
+                  onclick={() => rewindTo(i)}>
+                  回退到此
+                </button>
+              </div>
+            {/if}
           </div>
-          <div class="w-8 h-8 rounded-full bg-cyan-800/60 border border-cyan-700 flex items-center justify-center text-sm shrink-0">👤</div>
+          <div class="w-8 h-8 rounded-full bg-cyan-800/60 border border-cyan-700 flex items-center justify-center text-sm shrink-0">
+            👤
+          </div>
         </div>
       {:else}
         <div class="flex justify-start gap-2">
-          <div class="w-8 h-8 rounded-full bg-emerald-800/60 border border-emerald-700 flex items-center justify-center text-sm shrink-0">🤖</div>
+          <div class="w-8 h-8 rounded-full bg-emerald-800/60 border border-emerald-700 flex items-center justify-center text-sm shrink-0">
+            🤖
+          </div>
           <div class="flex flex-col gap-2 max-w-[85%] min-w-0">
             {#if textWithoutCode(m.content)}
               <div class="bg-slate-800/60 rounded-lg rounded-tl-sm px-3 py-2 text-sm text-slate-200 whitespace-pre-wrap break-words">
@@ -396,17 +496,13 @@
                 {@const unchanged = latest && isUnchangedFromPrevious(block, i, bi)}
                 {@const title = block.functions.join(", ") || "代码块"}
                 {#if !latest}
-                  <!-- 同命令旧稿：折叠为一行，避免多次优化堆叠编辑框 -->
                   <div class="border border-slate-800/80 rounded-lg overflow-hidden opacity-70">
                     <div class="flex items-center justify-between px-3 py-1.5 bg-slate-900/50 gap-2">
                       <div class="flex items-center gap-2 text-xs min-w-0">
                         <span class="text-cyan-300/70 font-mono truncate">{title}</span>
                         <span class="text-slate-500 shrink-0">已有更新版本</span>
                       </div>
-                      <button
-                        type="button"
-                        class="text-xs text-slate-500 hover:text-slate-300 shrink-0"
-                        onclick={() => toggleBlock(key)}>
+                      <button type="button" class="text-xs text-slate-500 hover:text-slate-300 shrink-0" onclick={() => toggleBlock(key)}>
                         {expandedBlocks.has(key) ? "收起旧稿" : "查看旧稿"}
                       </button>
                     </div>
@@ -420,10 +516,7 @@
                       <span class="text-cyan-300 font-mono truncate">{title}</span>
                       <span class="text-slate-500">与上一版相同 · {block.syntax_ok ? "语法✓" : "语法✗"} · {block.safety_ok ? "安全✓" : "安全✗"}</span>
                     </div>
-                    <button
-                      type="button"
-                      class="text-xs text-slate-500 hover:text-slate-300 shrink-0"
-                      onclick={() => toggleBlock(key)}>
+                    <button type="button" class="text-xs text-slate-500 hover:text-slate-300 shrink-0" onclick={() => toggleBlock(key)}>
                       {expandedBlocks.has(key) ? "收起" : "查看"}
                     </button>
                   </div>
@@ -460,6 +553,7 @@
                             {/each}
                           </select>
                           <button
+                            type="button"
                             class="px-2 py-1 text-xs bg-emerald-700 hover:bg-emerald-600 rounded disabled:opacity-40"
                             disabled={!canApply(block) || applying}
                             onclick={() => apply(block, key)}>
@@ -479,49 +573,71 @@
 
     {#if loading}
       <div class="flex justify-start gap-2">
-        <div class="w-8 h-8 rounded-full bg-emerald-800/60 border border-emerald-700 flex items-center justify-center text-sm shrink-0">🤖</div>
-        <div class="flex items-center gap-2 bg-slate-800/60 rounded-lg rounded-tl-sm px-3 py-2">
-          <span class="inline-block w-2 h-2 bg-emerald-400 rounded-full animate-bounce" style="animation-delay: 0ms"></span>
-          <span class="inline-block w-2 h-2 bg-emerald-400 rounded-full animate-bounce" style="animation-delay: 150ms"></span>
-          <span class="inline-block w-2 h-2 bg-emerald-400 rounded-full animate-bounce" style="animation-delay: 300ms"></span>
-          <span class="text-xs text-slate-400 ml-1">正在审阅命令…</span>
+        <div class="w-8 h-8 rounded-full bg-emerald-800/60 border border-emerald-700 flex items-center justify-center text-sm shrink-0">
+          🤖
+        </div>
+        <div class="flex items-center gap-3 bg-slate-800/60 rounded-lg rounded-tl-sm px-3 py-2">
+          <div class="flex items-center gap-2">
+            <span class="inline-block w-2 h-2 bg-emerald-400 rounded-full animate-bounce" style="animation-delay: 0ms"></span>
+            <span class="inline-block w-2 h-2 bg-emerald-400 rounded-full animate-bounce" style="animation-delay: 150ms"></span>
+            <span class="inline-block w-2 h-2 bg-emerald-400 rounded-full animate-bounce" style="animation-delay: 300ms"></span>
+            <span class="text-xs text-slate-400 ml-1">正在生成…</span>
+          </div>
+          <button
+            type="button"
+            class="px-2 py-0.5 text-xs rounded border border-red-700/70 text-red-300 hover:bg-red-900/40"
+            onclick={stopGeneration}>
+            停止
+          </button>
         </div>
       </div>
     {/if}
   </div>
 
-  <div class="p-3 border-t border-slate-700 space-y-2">
-    {#if draftMode}
-      <p class="text-xs text-amber-300/90 px-1">
-        {draftMode === "edit" ? "正在编辑消息" : "已回退到此条"}，修改后发送将从此处继续
-      </p>
+  <div class="p-3 border-t border-slate-700 space-y-2 shrink-0">
+    {#if rewindBackup}
+      <div class="flex items-center justify-between gap-2 px-1">
+        <p class="text-xs text-amber-300">已回退：编辑下方内容后发送，将从该条继续</p>
+        <button type="button" class="text-xs text-slate-400 hover:text-slate-200 shrink-0" onclick={cancelRewind} disabled={loading}>
+          取消回退
+        </button>
+      </div>
     {/if}
-    <div class="flex gap-2">
-      <input
+    {#if editingId}
+      <p class="text-xs text-amber-300/80 px-1">正在编辑上方消息 — 请在气泡内点「重新发送」</p>
+    {/if}
+    <div class="flex gap-2 items-end">
+      <textarea
         id="dst-chat-input"
         bind:value={input}
-        onkeydown={(e) => e.key === "Enter" && !e.shiftKey && (e.preventDefault(), send())}
-        placeholder={draftMode ? "编辑后发送，或点取消恢复…" : "继续追问，或描述新命令…"}
-        class="flex-1 px-3 py-2 text-sm bg-slate-800 border rounded-lg text-slate-200 focus:outline-none {draftMode
+        rows={rewindBackup ? 5 : 2}
+        onkeydown={(e) => {
+          if (e.key === "Enter" && !e.shiftKey && !loading && !editingId) {
+            e.preventDefault();
+            void send();
+          }
+        }}
+        placeholder={rewindBackup ? "回退后可修改，然后发送…" : "继续追问…（Shift+Enter 换行）"}
+        class="flex-1 px-3 py-2 text-sm bg-slate-800 border rounded-lg text-slate-200 focus:outline-none resize-y min-h-[2.5rem] max-h-48 {rewindBackup
           ? 'border-amber-600/70 focus:border-amber-500'
           : 'border-slate-700 focus:border-cyan-600'}"
-        disabled={loading || !profileId} />
-      {#if draftMode}
+        disabled={loading || !profileId || editingId !== null}></textarea>
+      {#if loading}
         <button
           type="button"
-          class="px-3 py-2 text-sm bg-slate-700 hover:bg-slate-600 rounded-lg disabled:opacity-50 transition-colors shrink-0"
-          onclick={cancelDraft}
-          disabled={loading}
-          title="恢复编辑/回退前的对话">
-          取消
+          class="px-4 py-2 text-sm bg-red-800/80 hover:bg-red-700 rounded-lg shrink-0"
+          onclick={stopGeneration}>
+          停止
+        </button>
+      {:else}
+        <button
+          type="button"
+          class="px-4 py-2 text-sm bg-cyan-600 hover:bg-cyan-500 rounded-lg disabled:opacity-50 shrink-0"
+          onclick={send}
+          disabled={!input.trim() || !profileId || editingId !== null}>
+          发送
         </button>
       {/if}
-      <button
-        class="px-4 py-2 text-sm bg-cyan-600 hover:bg-cyan-500 rounded-lg disabled:opacity-50 transition-colors shrink-0"
-        onclick={send}
-        disabled={loading || !input.trim() || !profileId}>
-        发送
-      </button>
     </div>
   </div>
 </div>

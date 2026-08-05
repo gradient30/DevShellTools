@@ -102,11 +102,11 @@ pub async fn create_category(file_name: String, content: String, _message: Strin
         if !report.ok {
             return Err(DstError::SafetyBlocked(report.violations.join("; ")));
         }
-        ps_parser::validate_syntax(&content)?;
+        let parsed = ps_parser::parse_ps1(&content)?;
         workspace::write_file(&rel, &content)?;
-        sync::regenerate_all()?;
+        sync::regenerate_with_parsed(&file_name, Some(parsed))?;
         workspace::touch_last_sync()?;
-        let _ = install_mgr::sync_runtime_modules();
+        install_mgr::spawn_sync_runtime_modules();
         Ok(())
     })
     .await
@@ -117,9 +117,9 @@ pub async fn delete_category(file_name: String, _message: String) -> DstResult<(
     run_blocking(move || {
         let rel = format!("Public/{file_name}");
         workspace::delete_file(&rel)?;
-        sync::regenerate_all()?;
+        sync::regenerate_with_parsed(&file_name, None)?;
         workspace::touch_last_sync()?;
-        let _ = install_mgr::sync_runtime_modules();
+        install_mgr::spawn_sync_runtime_modules();
         Ok(())
     })
     .await
@@ -133,11 +133,11 @@ pub async fn update_category_file(file_name: String, content: String, _message: 
         if !report.ok {
             return Err(DstError::SafetyBlocked(report.violations.join("; ")));
         }
-        ps_parser::validate_syntax(&content)?;
+        let parsed = ps_parser::parse_ps1(&content)?;
         workspace::write_file(&rel, &content)?;
-        sync::regenerate_all()?;
+        sync::regenerate_with_parsed(&file_name, Some(parsed))?;
         workspace::touch_last_sync()?;
-        let _ = install_mgr::sync_runtime_modules();
+        install_mgr::spawn_sync_runtime_modules();
         Ok(())
     })
     .await
@@ -146,9 +146,10 @@ pub async fn update_category_file(file_name: String, content: String, _message: 
 #[tauri::command]
 pub async fn sync_public(_message: String) -> DstResult<()> {
     run_blocking(move || {
+        // 手动「同步公共部分」仍全量扫描，保证与磁盘完全一致
         sync::regenerate_all()?;
         workspace::touch_last_sync()?;
-        let _ = install_mgr::sync_runtime_modules();
+        install_mgr::spawn_sync_runtime_modules();
         Ok(())
     })
     .await
@@ -337,6 +338,12 @@ pub async fn ai_chat(messages: Vec<ChatMessage>, profile_id: Option<String>) -> 
     ai_chat_inner(messages, profile_id).await
 }
 
+/// 停止当前进行中的 AI 流式请求（前端「停止」按钮）。
+#[tauri::command]
+pub fn ai_cancel_chat() {
+    ai_client::cancel_chat();
+}
+
 #[tauri::command]
 pub async fn ai_chat_with_validation(messages: Vec<ChatMessage>, profile_id: Option<String>) -> DstResult<AiChatResult> {
     let reply = ai_chat_inner(messages, profile_id).await?;
@@ -388,10 +395,18 @@ pub struct AiChatResult { pub reply: String, pub code_blocks: Vec<ValidatedCodeB
 pub fn check_migration() -> migrate::MigrationCheck { migrate::check_migration() }
 
 #[tauri::command]
-pub fn migrate_legacy() -> DstResult<Vec<String>> {
-    let files = migrate::migrate_from_legacy()?;
-    logging::log(logging::LogLevel::Info, "migrate", &format!("迁移 {} 个文件", files.len()));
-    Ok(files)
+pub fn migrate_legacy() -> DstResult<migrate::MigrateResult> {
+    let result = migrate::migrate_from_legacy()?;
+    logging::log(
+        logging::LogLevel::Info,
+        "migrate",
+        &format!(
+            "迁移 {} 个文件；归档 {} 处",
+            result.migrated_files.len(),
+            result.archived_dirs.len()
+        ),
+    );
+    Ok(result)
 }
 
 /// 导出所有 Public/*.ps1 脚本到目标目录。

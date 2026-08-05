@@ -1,27 +1,20 @@
 use crate::error::{DstError, DstResult};
+use crate::install_mgr;
 use crate::workspace;
 use std::path::{Path, PathBuf};
+use std::time::SystemTime;
 
 fn documents_dir() -> PathBuf {
-    // 复用 workspace 的 MyDocuments 缓存
-    crate::workspace::my_documents_path_public()
-        .unwrap_or_else(|| {
-            std::env::var("USERPROFILE")
-                .map(|p| PathBuf::from(p).join("Documents"))
-                .unwrap_or_else(|_| PathBuf::from("."))
-        })
+    crate::workspace::my_documents_path_public().unwrap_or_else(|| {
+        std::env::var("USERPROFILE")
+            .map(|p| PathBuf::from(p).join("Documents"))
+            .unwrap_or_else(|_| PathBuf::from("."))
+    })
 }
 
-/// 可能含有待迁移命令的目录：旧 Studio 沙箱 + install.ps1 的两个目标目录。
-fn legacy_source_dirs() -> Vec<PathBuf> {
-    let docs = documents_dir();
-    vec![
-        docs.join("DevShellTools"),
-        docs.join("WindowsPowerShell")
-            .join("Modules")
-            .join("DevShellTools"),
-        docs.join("PowerShell").join("Modules").join("DevShellTools"),
-    ]
+/// 旧 Studio 沙箱（真正的「旧版」工作区，迁移后应归档）。
+fn old_sandbox_dir() -> PathBuf {
+    documents_dir().join("DevShellTools")
 }
 
 fn same_path(a: &Path, b: &Path) -> bool {
@@ -31,17 +24,81 @@ fn same_path(a: &Path, b: &Path) -> bool {
     }
 }
 
-/// 旧版 install.ps1 / 旧 Studio 工作区中，且不同于当前工作区根目录的来源。
-fn discover_legacy_dirs() -> Vec<PathBuf> {
+/// 可从中回收 Public/*.ps1 的来源：旧沙箱 + 非工作区的模块目录。
+fn merge_source_dirs() -> Vec<PathBuf> {
     let ws = workspace::workspace_root();
-    legacy_source_dirs()
-        .into_iter()
-        .filter(|d| !same_path(d, &ws))
-        .filter(|d| d.exists() && d.join("DevShellTools.psd1").exists())
-        .collect()
+    let mut dirs = vec![old_sandbox_dir(), install_mgr::ps51_module_dir(), install_mgr::ps7_module_dir()];
+    dirs.retain(|d| !same_path(d, &ws));
+    dirs.dedup_by(|a, b| same_path(a, b));
+    dirs
 }
 
-/// 检测旧版安装（install.ps1 或旧 Studio 沙箱是否存在可迁移内容）。
+fn is_old_sandbox(path: &Path) -> bool {
+    same_path(path, &old_sandbox_dir())
+}
+
+fn is_runtime_module_dir(path: &Path) -> bool {
+    same_path(path, &install_mgr::ps51_module_dir())
+        || same_path(path, &install_mgr::ps7_module_dir())
+}
+
+fn file_mtime(path: &Path) -> Option<SystemTime> {
+    path.metadata().and_then(|m| m.modified()).ok()
+}
+
+/// 源比目标新，或目标不存在 → 应采用源文件（保留最新）。
+fn source_is_newer_or_missing(src: &Path, dst: &Path) -> bool {
+    if !dst.exists() {
+        return true;
+    }
+    match (file_mtime(src), file_mtime(dst)) {
+        (Some(s), Some(d)) => s > d,
+        (Some(_), None) => true,
+        _ => false,
+    }
+}
+
+/// 该目录是否仍有「需要并入工作区」的内容，或属于应清理的旧沙箱。
+fn dir_actionable(legacy: &Path, ws_public: &Path) -> bool {
+    if !legacy.exists() || !legacy.join("DevShellTools.psd1").exists() {
+        return false;
+    }
+    // 旧沙箱只要还在，就提示迁移（迁移后会归档）
+    if is_old_sandbox(legacy) {
+        return true;
+    }
+    // 运行时模块目录：仅当存在工作区没有的、或更新的 Public 脚本时才提示
+    if !is_runtime_module_dir(legacy) {
+        return true;
+    }
+    let legacy_public = legacy.join("Public");
+    if !legacy_public.is_dir() {
+        return false;
+    }
+    let Ok(entries) = std::fs::read_dir(&legacy_public) else {
+        return false;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.extension().and_then(|s| s.to_str()) != Some("ps1") {
+            continue;
+        }
+        let Some(name) = path.file_name().and_then(|s| s.to_str()) else {
+            continue;
+        };
+        // Help.ps1 由 Studio 重生成，不作为迁移依据
+        if name.eq_ignore_ascii_case("Help.ps1") {
+            continue;
+        }
+        let target = ws_public.join(name);
+        if source_is_newer_or_missing(&path, &target) {
+            return true;
+        }
+    }
+    false
+}
+
+/// 检测仍需处理的旧版来源（用于 UI）。
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct MigrationCheck {
     pub has_legacy: bool,
@@ -50,9 +107,21 @@ pub struct MigrationCheck {
 }
 
 pub fn check_migration() -> MigrationCheck {
-    let legacy: Vec<String> = discover_legacy_dirs()
-        .iter()
-        .map(|d| d.display().to_string())
+    let ws_public = workspace::workspace_root().join("Public");
+    let legacy: Vec<String> = merge_source_dirs()
+        .into_iter()
+        .filter(|d| dir_actionable(d, &ws_public))
+        .map(|d| {
+            if is_old_sandbox(&d) {
+                format!("旧 Studio 沙箱：{}", d.display())
+            } else if same_path(&d, &install_mgr::ps7_module_dir()) {
+                format!("PowerShell 7 模块目录（含尚未并入的命令）：{}", d.display())
+            } else if same_path(&d, &install_mgr::ps51_module_dir()) {
+                format!("Windows PowerShell 5.1 模块目录（含尚未并入的命令）：{}", d.display())
+            } else {
+                d.display().to_string()
+            }
+        })
         .collect();
     MigrationCheck {
         has_legacy: !legacy.is_empty(),
@@ -61,48 +130,123 @@ pub fn check_migration() -> MigrationCheck {
     }
 }
 
-/// 执行迁移：把旧版 Public/*.ps1 合并到便携工作区（保留用户自定义命令）。
-/// 旧版的公共部分（.psd1/.psm1/Help.ps1）忽略，由 Studio 重生成。
-/// 返回迁移的文件列表。
-pub fn migrate_from_legacy() -> DstResult<Vec<String>> {
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct MigrateResult {
+    /// 实际写入/更新到工作区的文件名
+    pub migrated_files: Vec<String>,
+    /// 已归档的旧沙箱路径
+    pub archived_dirs: Vec<String>,
+    pub message: String,
+}
+
+fn archive_old_sandbox() -> DstResult<Option<String>> {
+    let sandbox = old_sandbox_dir();
+    if !sandbox.exists() {
+        return Ok(None);
+    }
+    let ts = chrono::Local::now().format("%Y%m%d-%H%M%S");
+    let dest = documents_dir().join(format!("DevShellTools.migrated-{ts}"));
+    // 若目标偶发存在则加后缀
+    let dest = if dest.exists() {
+        documents_dir().join(format!(
+            "DevShellTools.migrated-{ts}-{}",
+            std::process::id()
+        ))
+    } else {
+        dest
+    };
+    std::fs::rename(&sandbox, &dest).map_err(|e| {
+        DstError::Other(format!(
+            "归档旧沙箱失败：{} → {}：{e}",
+            sandbox.display(),
+            dest.display()
+        ))
+    })?;
+    Ok(Some(dest.display().to_string()))
+}
+
+/// 执行迁移：把可回收目录中较新的 Public/*.ps1 并入工作区，重生成公共部分，
+/// 同步到 PS7 运行时目录，并归档旧 Studio 沙箱。
+pub fn migrate_from_legacy() -> DstResult<MigrateResult> {
     let check = check_migration();
     if !check.has_legacy {
-        return Err(DstError::Other("未检测到旧版安装".into()));
+        return Err(DstError::Other("未检测到需要迁移的旧版内容".into()));
     }
-    // 确保工作区已初始化
     if !workspace::is_initialized() {
         workspace::init_from_template()?;
     }
 
-    let mut migrated = vec![];
     let ws_root = workspace::workspace_root();
     let ws_public = ws_root.join("Public");
+    std::fs::create_dir_all(&ws_public)?;
 
-    for legacy_dir in discover_legacy_dirs() {
+    let mut migrated = vec![];
+    let sources: Vec<PathBuf> = merge_source_dirs()
+        .into_iter()
+        .filter(|d| d.exists() && d.join("Public").is_dir())
+        .collect();
+
+    for legacy_dir in &sources {
         let legacy_public = legacy_dir.join("Public");
-        if !legacy_public.exists() {
+        let Ok(entries) = std::fs::read_dir(&legacy_public) else {
             continue;
-        }
-        // 复制所有 .ps1 文件（覆盖工作区同名文件）
-        for entry in std::fs::read_dir(&legacy_public)? {
-            let entry = entry?;
+        };
+        for entry in entries.flatten() {
             let path = entry.path();
-            if path.extension().and_then(|s| s.to_str()) == Some("ps1") {
-                if let Some(name) = path.file_name().and_then(|s| s.to_str()) {
-                    let target = ws_public.join(name);
-                    std::fs::copy(&path, &target)?;
-                    migrated.push(name.to_string());
-                }
+            if path.extension().and_then(|s| s.to_str()) != Some("ps1") {
+                continue;
+            }
+            let Some(name) = path.file_name().and_then(|s| s.to_str()) else {
+                continue;
+            };
+            if name.eq_ignore_ascii_case("Help.ps1") {
+                continue;
+            }
+            let target = ws_public.join(name);
+            if !source_is_newer_or_missing(&path, &target) {
+                continue;
+            }
+            std::fs::copy(&path, &target).map_err(|e| {
+                DstError::Other(format!("复制 {name} 失败：{e}"))
+            })?;
+            if !migrated.iter().any(|n| n == name) {
+                migrated.push(name.to_string());
             }
         }
     }
 
-    // 重生成公共部分
-    crate::sync::regenerate_all()?;
+    migrated.sort();
     crate::sync::invalidate_category_cache();
+    crate::sync::regenerate_all()?;
     workspace::touch_last_sync()?;
+    // 把工作区最新内容同步到 PS7 等运行时目录（它们是当前安装镜像，不是旧版）
+    let sync_note = install_mgr::sync_runtime_modules().unwrap_or_default();
 
-    Ok(migrated)
+    let mut archived_dirs = vec![];
+    if let Some(archived) = archive_old_sandbox()? {
+        archived_dirs.push(archived);
+    }
+
+    let message = {
+        let mut parts = vec![format!(
+            "已将 {} 个较新/缺失的脚本并入当前工作区",
+            migrated.len()
+        )];
+        if !archived_dirs.is_empty() {
+            parts.push(format!("已归档旧沙箱 → {}", archived_dirs.join("、")));
+        }
+        if !sync_note.is_empty() {
+            parts.push(sync_note);
+        }
+        parts.push("PowerShell 7 / 5.1 模块目录已按当前工作区对齐，不再视为旧版。".into());
+        parts.join("。")
+    };
+
+    Ok(MigrateResult {
+        migrated_files: migrated,
+        archived_dirs,
+        message,
+    })
 }
 
 #[cfg(test)]
@@ -110,20 +254,53 @@ mod tests {
     use super::*;
 
     #[test]
-    fn legacy_dirs_check() {
-        let dirs = legacy_source_dirs();
-        assert!(dirs.iter().any(|d| d.to_string_lossy().ends_with("DevShellTools")));
-        assert!(dirs.iter().any(|d| d.to_string_lossy().contains("WindowsPowerShell")));
-        assert!(dirs.iter().any(|d| {
-            d.to_string_lossy()
-                .contains("Documents\\DevShellTools")
-                || d.to_string_lossy().contains("Documents/DevShellTools")
-        }));
+    fn old_sandbox_path_under_documents() {
+        let p = old_sandbox_dir();
+        let s = p.to_string_lossy();
+        assert!(
+            s.ends_with("DevShellTools") || s.ends_with("DevShellTools\\") || s.ends_with("DevShellTools/"),
+            "{s}"
+        );
+        assert!(
+            s.contains("Documents") || s.contains("documents"),
+            "应在 Documents 下：{s}"
+        );
+    }
+
+    #[test]
+    fn source_newer_logic() {
+        let dir = std::env::temp_dir().join(format!(
+            "dst-mtime-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let _ = std::fs::create_dir_all(&dir);
+        let a = dir.join("a.ps1");
+        let b = dir.join("b.ps1");
+        std::fs::write(&a, "a").unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        std::fs::write(&b, "b").unwrap();
+        assert!(source_is_newer_or_missing(&b, &a));
+        assert!(!source_is_newer_or_missing(&a, &b));
+        assert!(source_is_newer_or_missing(&a, &dir.join("missing.ps1")));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
     fn migration_check_returns_struct() {
         let check = check_migration();
+        // 标签文案可能变长，条数仍有限
         assert!(check.legacy_dirs.len() <= 3);
+    }
+
+    #[test]
+    fn merge_sources_exclude_workspace() {
+        let ws = workspace::workspace_root();
+        for d in merge_source_dirs() {
+            assert!(!same_path(&d, &ws), "来源不应包含工作区本身");
+        }
     }
 }

@@ -209,12 +209,10 @@
   async function handleSave(content: string, message: string) {
     if (!selectedFileName) return;
     try {
-      await withBusy("正在保存分类并更新元数据…", async () => {
-        await api.updateCategoryFile(selectedFileName!, content, message);
-        await loadCategories();
-        if (tab === "manage") await loadManageSidebar();
-      });
-      successMsg.set("已保存并重生成公共部分");
+      await api.updateCategoryFile(selectedFileName, content, message);
+      await loadCategories();
+      if (tab === "manage") void loadManageSidebar();
+      showToast("已保存", "success", 1800);
     } catch (e) {
       errorMsg.set(String(e));
     }
@@ -223,13 +221,11 @@
   async function handleDelete(fileName: string) {
     if (!confirm(`确认删除分类文件 ${fileName}？此操作会自动重生成公共部分。`)) return;
     try {
-      await withBusy(`正在删除 ${fileName}…`, async () => {
-        await api.deleteCategory(fileName, `删除分类 ${fileName}`);
-        if (selectedFileName === fileName) selectedFileName = null;
-        await loadCategories();
-        if (tab === "manage") await loadManageSidebar();
-      });
-      successMsg.set(`已删除 ${fileName}`);
+      await api.deleteCategory(fileName, `删除分类 ${fileName}`);
+      if (selectedFileName === fileName) selectedFileName = null;
+      await loadCategories();
+      if (tab === "manage") void loadManageSidebar();
+      showToast(`已删除 ${fileName}`, "info", 2000);
     } catch (e) {
       errorMsg.set(String(e));
     }
@@ -237,14 +233,12 @@
 
   async function handleCreate(fileName: string, content: string, message: string) {
     try {
-      await withBusy(`正在创建分类 ${fileName}…`, async () => {
-        await api.createCategory(fileName, content, message);
-        await loadCategories();
-        selectedFileName = fileName;
-        if (tab === "manage") await loadManageSidebar();
-      });
-      successMsg.set(`已创建分类 ${fileName}`);
+      await api.createCategory(fileName, content, message);
+      await loadCategories();
+      selectedFileName = fileName;
+      if (tab === "manage") void loadManageSidebar();
       showNewDialog = false;
+      showToast(`已创建 ${fileName}`, "success", 2000);
     } catch (e) {
       errorMsg.set(String(e));
     }
@@ -252,12 +246,12 @@
 
   async function handleSync() {
     try {
-      await withBusy("正在同步公共部分与模块目录…", async () => {
+      await withBusy("正在全量同步公共部分…", async () => {
         await api.syncPublic("手动同步公共部分");
         await loadCategories();
         await loadManageSidebar();
       });
-      successMsg.set("公共部分已重生成");
+      showToast("公共部分已重生成", "success", 2500);
     } catch (e) {
       errorMsg.set(String(e));
     }
@@ -265,23 +259,13 @@
 
   async function handleApplyCode(code: string, fileName: string) {
     try {
-      const applied = await withBusy("正在插入命令并同步模块…", async () => {
-        const names = await api.applyAiCode(fileName, code, `AI 插入到 ${fileName}`);
-        await loadCategories();
-        selectedFileName = fileName;
-        tab = "manage";
-        await loadManageSidebar();
-        void loadInstallStatus();
-        return names;
-      });
-      successMsg.set(
-        `已插入并同步模块：${applied.join(", ")}。已打开的 PowerShell 请执行 Import-Module DevShellTools -Force`
-      );
-      showToast(
-        `已生效到模块目录；当前 PS 会话请 Import-Module DevShellTools -Force`,
-        "success",
-        6000
-      );
+      const names = await api.applyAiCode(fileName, code, `AI 插入到 ${fileName}`);
+      selectedFileName = fileName;
+      tab = "manage";
+      await loadCategories();
+      void loadManageSidebar();
+      void loadInstallStatus();
+      showToast(`已插入 ${names.join(", ")}`, "success", 3500);
     } catch (e) {
       errorMsg.set(String(e));
     }
@@ -453,18 +437,21 @@
       </div>
     {/if}
     <div class="flex-1 overflow-hidden relative min-h-0">
-      {#if categoriesLoading}
-        <div
-          class="absolute inset-0 z-20 bg-slate-950/40 backdrop-blur-[1px] flex items-center justify-center pointer-events-auto"
-          aria-busy="true">
-          <div class="bg-slate-900 border border-slate-700 rounded-lg px-5 py-4 text-sm text-slate-200 shadow-lg max-w-sm text-center">
-            <div class="mx-auto mb-3 h-6 w-6 border-2 border-cyan-400/30 border-t-cyan-400 rounded-full animate-spin"></div>
-            <p>{categoriesLoadMsg || "正在解析分类元数据…"}</p>
-            <p class="text-xs text-slate-500 mt-2">后台调用 PowerShell AST，界面暂时锁定以免误点</p>
+      <!-- 分类加载遮罩仅盖住管理页，避免挡住 AI 助手的编辑/回退/停止 -->
+      <div
+        class="absolute inset-0 flex overflow-hidden {tab === 'manage' ? 'z-10' : 'z-0 pointer-events-none hidden'}"
+        aria-hidden={tab !== "manage"}>
+        {#if categoriesLoading}
+          <div
+            class="absolute inset-0 z-20 bg-slate-950/40 backdrop-blur-[1px] flex items-center justify-center pointer-events-auto"
+            aria-busy="true">
+            <div class="bg-slate-900 border border-slate-700 rounded-lg px-5 py-4 text-sm text-slate-200 shadow-lg max-w-sm text-center">
+              <div class="mx-auto mb-3 h-6 w-6 border-2 border-cyan-400/30 border-t-cyan-400 rounded-full animate-spin"></div>
+              <p>{categoriesLoadMsg || "正在解析分类元数据…"}</p>
+              <p class="text-xs text-slate-500 mt-2">后台调用 PowerShell AST，界面暂时锁定以免误点</p>
+            </div>
           </div>
-        </div>
-      {/if}
-      <div class="absolute inset-0 flex overflow-hidden" class:hidden={tab !== "manage"} aria-hidden={tab !== "manage"}>
+        {/if}
         <CategoryList {categories} {selectedFileName} loading={categoriesLoading} onSelect={onSelect} />
         <CategoryEditor
           category={selectedCategory}
@@ -536,7 +523,9 @@
         </aside>
       </div>
 
-      <div class="absolute inset-0 overflow-hidden" class:hidden={tab !== "chat"} aria-hidden={tab !== "chat"}>
+      <div
+        class="absolute inset-0 overflow-hidden {tab === 'chat' ? 'z-10' : 'z-0 pointer-events-none hidden'}"
+        aria-hidden={tab !== "chat"}>
         {#if aiReady}
           <ChatPanel
             {categories}
@@ -556,11 +545,15 @@
         {/if}
       </div>
 
-      <div class="absolute inset-0 overflow-y-auto" class:hidden={tab !== "settings"} aria-hidden={tab !== "settings"}>
+      <div
+        class="absolute inset-0 overflow-y-auto {tab === 'settings' ? 'z-10' : 'z-0 pointer-events-none hidden'}"
+        aria-hidden={tab !== "settings"}>
         <AiSettings />
       </div>
 
-      <div class="absolute inset-0 overflow-y-auto" class:hidden={tab !== "tools"} aria-hidden={tab !== "tools"}>
+      <div
+        class="absolute inset-0 overflow-y-auto {tab === 'tools' ? 'z-10' : 'z-0 pointer-events-none hidden'}"
+        aria-hidden={tab !== "tools"}>
         <ToolsPage
           migration={toolsMigration}
           webview2={toolsWebview2}

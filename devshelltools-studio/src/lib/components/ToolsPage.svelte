@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { api, type MigrationCheck, type Webview2Status } from "../api";
+  import { api, type MigrationCheck, type MigrateResult, type Webview2Status } from "../api";
 
   let {
     migration = null,
@@ -23,13 +23,25 @@
 
   async function doMigrate() {
     if (!migration?.has_legacy) return;
-    if (!confirm("将旧版安装的 Public/*.ps1 合并到便携工作区？公共部分会自动重生成。")) return;
+    if (
+      !confirm(
+        "将把较新的 Public 命令并入当前工作区，重生成公共部分并同步到 PowerShell 模块目录；旧 Studio 沙箱（Documents\\DevShellTools）会归档为 DevShellTools.migrated-*。是否继续？"
+      )
+    ) {
+      return;
+    }
     busy = true;
     errMsg = "";
     msg = "";
     try {
-      const files = await api.migrateLegacy();
-      msg = `迁移完成：${files.length} 个文件`;
+      const result: MigrateResult = await api.migrateLegacy();
+      const files = result.migrated_files.length
+        ? `更新文件：${result.migrated_files.join(", ")}`
+        : "无需覆盖文件（工作区已是最新）";
+      const archived = result.archived_dirs.length
+        ? `\n已归档：${result.archived_dirs.join("；")}`
+        : "";
+      msg = `${result.message}\n${files}${archived}`;
       await onRefresh();
     } catch (e) {
       errMsg = String(e);
@@ -114,14 +126,24 @@
 
     <section class="bg-slate-800/60 rounded-lg p-4 border border-slate-700">
       <h3 class="text-sm font-semibold text-amber-300 mb-2">旧版迁移助手</h3>
+      <p class="text-xs text-slate-500 mb-3 leading-relaxed">
+        当前工作区为最新编辑副本。迁移会合并其它位置中较新的命令，同步模块目录，并归档旧沙箱；完成后不应再提示「旧版安装」。
+      </p>
       {#if migration?.has_legacy}
-        <p class="text-xs text-slate-300 mb-2">检测到旧版安装：</p>
-        <ul class="text-xs text-slate-400 mb-2">
-          {#each migration.legacy_dirs as d}<li class="font-mono">{d}</li>{/each}
+        <p class="text-xs text-slate-300 mb-2">仍需处理：</p>
+        <ul class="text-xs text-slate-400 mb-3 space-y-1.5">
+          {#each migration.legacy_dirs as d}
+            <li class="font-mono break-all leading-snug pl-2 border-l-2 border-amber-700/60">{d}</li>
+          {/each}
         </ul>
-        <button class="px-3 py-1.5 text-sm bg-amber-600 hover:bg-amber-500 rounded disabled:opacity-50" onclick={doMigrate} disabled={busy}>执行迁移</button>
+        <button
+          class="px-3 py-1.5 text-sm bg-amber-600 hover:bg-amber-500 rounded disabled:opacity-50"
+          onclick={doMigrate}
+          disabled={busy}>
+          {busy ? "迁移中…" : "执行迁移并清理旧版"}
+        </button>
       {:else}
-        <p class="text-xs text-slate-500">未检测到旧版安装，无需迁移。</p>
+        <p class="text-xs text-emerald-400/90">未检测到待迁移的旧版内容，当前即为最新。</p>
       {/if}
     </section>
 

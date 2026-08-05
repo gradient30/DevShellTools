@@ -394,7 +394,7 @@
           {/if}
         </div>
         <label class="block">
-          <span class="text-xs text-slate-400">max_tokens（输出上限；思考模型建议 ≥8192）</span>
+          <span class="text-xs text-slate-400">max_tokens（输出上限；DeepSeek 建议 ≥16384，Studio 会自动关闭思考）</span>
           <input
             type="number"
             min="256"
