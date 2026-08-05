@@ -187,8 +187,12 @@
               <button class="px-2 py-0.5 text-xs text-emerald-400 hover:text-emerald-200 hover:bg-emerald-900/30 rounded transition-colors" onclick={() => test(f.name)} disabled={busy}>
                 测试
               </button>
-              <button class="px-2 py-0.5 text-xs text-amber-400 hover:text-amber-200 hover:bg-amber-900/30 rounded transition-colors" onclick={() => onAiGenerate(f)} disabled={busy}>
-                AI
+              <button
+                class="px-2 py-0.5 text-xs text-amber-400 hover:text-amber-200 hover:bg-amber-900/30 rounded transition-colors"
+                onclick={() => onAiGenerate(f)}
+                disabled={busy}
+                title="用 AI 检查当前命令：有问题给修复，无问题给优化/扩展建议">
+                AI审阅
               </button>
               <button class="px-2 py-0.5 text-xs text-red-400 hover:text-red-200 hover:bg-red-900/30 rounded transition-colors" onclick={() => remove(f.name)} disabled={busy}>
                 删

@@ -19,6 +19,7 @@
   import AiSettings from "./lib/components/AiSettings.svelte";
   import ToolsPage from "./lib/components/ToolsPage.svelte";
   import ToastHost from "./lib/components/ToastHost.svelte";
+  import { buildCommandReviewPrompt, extractFunctionSource } from "./lib/psSource";
 
   type Tab = "manage" | "chat" | "settings" | "tools";
   let tab = $state<Tab>("manage");
@@ -38,6 +39,8 @@
   let installStatus = $state<InstallStatus | null>(null);
   let installBusy = $state(false);
   let aiPrompt = $state("");
+  /** 递增以触发 ChatPanel 自动发送审阅提问 */
+  let aiAutoSendToken = $state(0);
 
   let toolsMigration = $state<MigrationCheck | null>(null);
   let toolsWebview2 = $state<Webview2Status | null>(null);
@@ -264,10 +267,32 @@
   function handleAiGenerate(func: PsFunction | null) {
     const cat = selectedCategory;
     if (!cat) return;
-    const base = func
-      ? `请为 DevShellTools 分类「${cat.category.title}」优化/实现命令 ${func.name}。当前说明：${func.synopsis}。示例：${func.first_example || func.name}。`
-      : `请为 DevShellTools 分类「${cat.category.title}」生成一个新的 PowerShell 快捷命令。`;
-    aiPrompt = `${base}\n已有命令：${cat.functions.map((f) => f.name).join(", ")}。`;
+    if (!aiReady) {
+      showToast("请先配置 AI，再使用命令审阅", "error", 4000);
+      tab = "settings";
+      return;
+    }
+
+    if (func) {
+      const source = extractFunctionSource(fileContent, func.name);
+      aiPrompt = buildCommandReviewPrompt({
+        categoryTitle: cat.category.title,
+        categoryName: cat.category.name,
+        fileName: cat.file_name,
+        funcName: func.name,
+        synopsis: func.synopsis,
+        example: func.first_example || func.name,
+        siblingNames: cat.functions.map((f) => f.name),
+        source
+      });
+    } else {
+      aiPrompt = [
+        `请为 DevShellTools 分类「${cat.category.title}」（${cat.category.name}，文件 ${cat.file_name}）设计一个实用的新快捷命令。`,
+        `已有命令：${cat.functions.map((f) => f.name).join(", ") || "(无)"}。`,
+        "请给出：用途说明、.SYNOPSIS/.EXAMPLE、完整函数代码（powershell 代码块），并遵守安全红线。"
+      ].join("\n");
+    }
+    aiAutoSendToken += 1;
     tab = "chat";
   }
 
@@ -494,6 +519,7 @@
           <ChatPanel
             {categories}
             initialPrompt={aiPrompt}
+            autoSendToken={aiAutoSendToken}
             onApplyCode={handleApplyCode}
             onOpenSettings={() => (tab = "settings")} />
         {:else}
