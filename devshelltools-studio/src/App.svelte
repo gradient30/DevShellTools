@@ -43,6 +43,17 @@
   let toolsWebview2 = $state<Webview2Status | null>(null);
   let toolsLogFiles = $state<string[]>([]);
   let toolsLoaded = $state(false);
+  /** 右侧栏帮助：consistency | sync | null */
+  let sidebarTip = $state<"consistency" | "sync" | null>(null);
+
+  const TIP_CONSISTENCY =
+    "比对四处是否一致：Public 实际导出的命令 ↔ 模块清单(.psd1) ↔ 加载器(.psm1) ↔ 帮助(Help.ps1)。通过表示导出列表齐全，可被 PowerShell 正确加载；不通过时可按错误修复，或点下方「同步公共部分」。「实际」= 扫描到的命令数，「psd1」= 清单声明数。";
+  const TIP_SYNC =
+    "根据当前 Public/*.ps1 自动重写 .psd1 / .psm1 / Help.ps1 中的导出与帮助列表（即「公共部分」）。保存分类时通常已自动同步；此按钮用于手动补齐或修复不一致。";
+
+  function toggleSidebarTip(which: "consistency" | "sync") {
+    sidebarTip = sidebarTip === which ? null : which;
+  }
 
   onMount(async () => {
     await refresh();
@@ -414,7 +425,22 @@
           onChanged={loadCategories}
           onAiGenerate={handleAiGenerate} />
         <aside class="w-64 shrink-0 bg-slate-900/60 border-l border-slate-700 overflow-y-auto p-3">
-          <h3 class="text-xs font-semibold text-slate-400 mb-2">一致性校验</h3>
+          <div class="flex items-center gap-1.5 mb-2">
+            <h3 class="text-xs font-semibold text-slate-400">一致性校验</h3>
+            <button
+              type="button"
+              class="inline-flex h-4 w-4 items-center justify-center rounded-full border text-[10px] leading-none transition-colors {sidebarTip === 'consistency'
+                ? 'border-cyan-500 text-cyan-300 bg-cyan-950/50'
+                : 'border-slate-600 text-slate-400 hover:border-cyan-500 hover:text-cyan-300'}"
+              onclick={() => toggleSidebarTip("consistency")}
+              aria-expanded={sidebarTip === "consistency"}
+              aria-label="一致性校验说明">?</button>
+          </div>
+          {#if sidebarTip === "consistency"}
+            <p class="mb-3 rounded border border-slate-700 bg-slate-950/80 px-2.5 py-2 text-[11px] leading-relaxed text-slate-300">
+              {TIP_CONSISTENCY}
+            </p>
+          {/if}
           {#if categoriesLoading || !consistency}
             <div class="h-16 bg-slate-800/40 rounded animate-pulse"></div>
             {#if categoriesLoading}
@@ -437,10 +463,27 @@
             </div>
           {/if}
 
-          <div class="mt-4 flex gap-2">
-            <button class="px-2 py-1 text-xs bg-slate-700 hover:bg-slate-600 rounded" onclick={handleSync}>同步公共部分</button>
+          <div class="mt-4 flex flex-wrap items-center gap-2">
+            <div class="flex items-center gap-1">
+              <button
+                class="px-2 py-1 text-xs bg-slate-700 hover:bg-slate-600 rounded"
+                onclick={handleSync}>同步公共部分</button>
+              <button
+                type="button"
+                class="inline-flex h-4 w-4 items-center justify-center rounded-full border text-[10px] leading-none transition-colors {sidebarTip === 'sync'
+                  ? 'border-cyan-500 text-cyan-300 bg-cyan-950/50'
+                  : 'border-slate-600 text-slate-400 hover:border-cyan-500 hover:text-cyan-300'}"
+                onclick={() => toggleSidebarTip("sync")}
+                aria-expanded={sidebarTip === "sync"}
+                aria-label="同步公共部分说明">?</button>
+            </div>
             <button class="px-2 py-1 text-xs bg-cyan-600 hover:bg-cyan-500 rounded" onclick={() => (showNewDialog = true)}>新建分类</button>
           </div>
+          {#if sidebarTip === "sync"}
+            <p class="mt-2 rounded border border-slate-700 bg-slate-950/80 px-2.5 py-2 text-[11px] leading-relaxed text-slate-300">
+              {TIP_SYNC}
+            </p>
+          {/if}
         </aside>
       </div>
 
