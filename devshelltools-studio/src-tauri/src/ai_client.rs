@@ -37,13 +37,52 @@ pub async fn chat_stream(
     }
 }
 
+// ============ 端点归一化 ============
+
+/// 纠正已知失效/错误的 OpenAI 兼容 Base URL。
+/// 例如旧预设 `https://api.ollama.cloud/v1` 现已全局 503，应改用官方 `https://ollama.com/v1`。
+fn normalize_openai_base_url(base_url: &str) -> String {
+    let trimmed = base_url.trim().trim_end_matches('/');
+    let lower = trimmed.to_lowercase();
+    if lower.contains("api.ollama.cloud") {
+        return "https://ollama.com/v1".into();
+    }
+    trimmed.to_string()
+}
+
+// ============ 采样参数策略 ============
+
+/// 部分模型对 temperature 有硬性限制：
+/// - Kimi K2/K3 系列：固定采样，官方要求不传（传非 1 会 400）
+/// - OpenAI o1/o3/o4 推理系列：不支持 temperature
+/// - deepseek-reasoner 等：历史上曾拒绝该参数，省略更安全
+/// 返回 None 表示请求体中省略该字段。
+fn temperature_for_request(model: &str, configured: f64) -> Option<f64> {
+    let m = model.to_lowercase();
+    if m.starts_with("kimi-k") {
+        return None;
+    }
+    if m.starts_with("o1")
+        || m.starts_with("o3")
+        || m.starts_with("o4-")
+        || m == "o4"
+    {
+        return None;
+    }
+    if m.contains("reasoner") {
+        return None;
+    }
+    Some(configured)
+}
+
 // ============ OpenAI 协议 ============
 
 #[derive(Serialize)]
 struct OpenaiRequest {
     model: String,
     messages: Vec<ChatMessage>,
-    temperature: f64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    temperature: Option<f64>,
     max_tokens: u32,
     stream: bool,
 }
@@ -68,11 +107,12 @@ async fn chat_openai(
     api_key: &str,
     messages: Vec<ChatMessage>,
 ) -> DstResult<Vec<StreamEvent>> {
-    let url = format!("{}/chat/completions", config.base_url.trim_end_matches('/'));
+    let base = normalize_openai_base_url(&config.base_url);
+    let url = format!("{base}/chat/completions");
     let body = OpenaiRequest {
         model: config.model.clone(),
         messages,
-        temperature: config.temperature,
+        temperature: temperature_for_request(&config.model, config.temperature),
         max_tokens: config.max_tokens,
         stream: true,
     };
@@ -145,7 +185,8 @@ struct AnthropicRequest {
     model: String,
     messages: Vec<ChatMessage>,
     system: String,
-    temperature: f64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    temperature: Option<f64>,
     max_tokens: u32,
     stream: bool,
 }
@@ -187,7 +228,7 @@ async fn chat_anthropic(
         model: config.model.clone(),
         messages: user_messages,
         system,
-        temperature: config.temperature,
+        temperature: temperature_for_request(&config.model, config.temperature),
         max_tokens: config.max_tokens,
         stream: true,
     };
@@ -269,8 +310,13 @@ struct OpenaiModelItem {
 /// 拉取可用模型列表。
 /// OpenAI 和 Anthropic 协议都走 GET /v1/models 真实拉取（DeepSeek 等 OpenAI 兼容服务也支持此端点）。
 /// Anthropic 官方 API 也可用 /v1/models（需 x-api-key 头）。
+/// Ollama（含 Cloud）在 OpenAI `/models` 失败时回退原生 `/api/tags`。
 pub async fn list_models(config: &AiConfig, api_key: &str) -> DstResult<Vec<String>> {
-    let url = format!("{}/models", config.base_url.trim_end_matches('/'));
+    let base = match config.protocol {
+        AiProtocol::Openai => normalize_openai_base_url(&config.base_url),
+        AiProtocol::Anthropic => config.base_url.trim().trim_end_matches('/').to_string(),
+    };
+    let url = format!("{base}/models");
     let client = reqwest::Client::new();
     let req = match config.protocol {
         AiProtocol::Openai => client.get(&url).bearer_auth(api_key),
@@ -281,16 +327,72 @@ pub async fn list_models(config: &AiConfig, api_key: &str) -> DstResult<Vec<Stri
     };
     let resp = req.send().await.map_err(DstError::Http)?;
 
+    if resp.status().is_success() {
+        let parsed: OpenaiModelsResponse = resp.json().await.map_err(DstError::Http)?;
+        let mut ids: Vec<String> = parsed.data.into_iter().map(|m| m.id).collect();
+        ids.sort();
+        ids.dedup();
+        if ids.is_empty() {
+            return Err(DstError::Other("模型列表为空".into()));
+        }
+        return Ok(ids);
+    }
+
+    let status = resp.status();
+    let text = resp.text().await.unwrap_or_default();
+
+    // Ollama Cloud / 本地：回退原生 tags 接口
+    if matches!(config.protocol, AiProtocol::Openai) && is_ollama_base(&base) {
+        if let Ok(ids) = list_ollama_tags(&client, &base, api_key).await {
+            return Ok(ids);
+        }
+    }
+
+    Err(DstError::Other(format!("拉取模型失败 {status}：{text}")))
+}
+
+fn is_ollama_base(base_url: &str) -> bool {
+    let u = base_url.to_lowercase();
+    u.contains("ollama.com") || u.contains("ollama.cloud") || u.contains(":11434")
+}
+
+#[derive(Deserialize)]
+struct OllamaTagsResponse {
+    models: Vec<OllamaTagItem>,
+}
+
+#[derive(Deserialize)]
+struct OllamaTagItem {
+    name: String,
+}
+
+async fn list_ollama_tags(
+    client: &reqwest::Client,
+    openai_base: &str,
+    api_key: &str,
+) -> DstResult<Vec<String>> {
+    let tags_url = if let Some(root) = openai_base
+        .trim_end_matches('/')
+        .strip_suffix("/v1")
+    {
+        format!("{root}/api/tags")
+    } else {
+        format!("{}/api/tags", openai_base.trim_end_matches('/'))
+    };
+    let mut req = client.get(&tags_url);
+    if !api_key.trim().is_empty() {
+        req = req.bearer_auth(api_key);
+    }
+    let resp = req.send().await.map_err(DstError::Http)?;
     if !resp.status().is_success() {
         let status = resp.status();
         let text = resp.text().await.unwrap_or_default();
         return Err(DstError::Other(format!(
-            "拉取模型失败 {status}：{text}"
+            "Ollama /api/tags 失败 {status}：{text}"
         )));
     }
-
-    let parsed: OpenaiModelsResponse = resp.json().await.map_err(DstError::Http)?;
-    let mut ids: Vec<String> = parsed.data.into_iter().map(|m| m.id).collect();
+    let parsed: OllamaTagsResponse = resp.json().await.map_err(DstError::Http)?;
+    let mut ids: Vec<String> = parsed.models.into_iter().map(|m| m.name).collect();
     ids.sort();
     ids.dedup();
     if ids.is_empty() {
@@ -312,5 +414,63 @@ mod tests {
         let json = serde_json::to_string(&e).unwrap();
         assert!(json.contains("delta"));
         assert!(json.contains("hi"));
+    }
+
+    #[test]
+    fn kimi_k_models_omit_temperature() {
+        assert_eq!(temperature_for_request("kimi-k3", 0.7), None);
+        assert_eq!(temperature_for_request("kimi-k2.6", 0.7), None);
+        assert_eq!(temperature_for_request("Kimi-K2.5", 1.0), None);
+    }
+
+    #[test]
+    fn normal_models_keep_temperature() {
+        assert_eq!(temperature_for_request("deepseek-chat", 0.7), Some(0.7));
+        assert_eq!(temperature_for_request("glm-4-flash", 0.5), Some(0.5));
+        assert_eq!(temperature_for_request("qwen-plus", 0.7), Some(0.7));
+        assert_eq!(
+            temperature_for_request("ernie-4.0-turbo-8k", 0.7),
+            Some(0.7)
+        );
+        assert_eq!(
+            temperature_for_request("moonshot-v1-8k", 0.3),
+            Some(0.3)
+        );
+    }
+
+    #[test]
+    fn reasoning_models_omit_temperature() {
+        assert_eq!(temperature_for_request("o1-mini", 0.7), None);
+        assert_eq!(temperature_for_request("o3-mini", 0.7), None);
+        assert_eq!(temperature_for_request("deepseek-reasoner", 0.7), None);
+    }
+
+    #[test]
+    fn openai_request_omits_temperature_when_none() {
+        let body = OpenaiRequest {
+            model: "kimi-k3".into(),
+            messages: vec![],
+            temperature: None,
+            max_tokens: 1024,
+            stream: true,
+        };
+        let json = serde_json::to_string(&body).unwrap();
+        assert!(!json.contains("temperature"));
+    }
+
+    #[test]
+    fn normalize_dead_ollama_cloud_host() {
+        assert_eq!(
+            normalize_openai_base_url("https://api.ollama.cloud/v1"),
+            "https://ollama.com/v1"
+        );
+        assert_eq!(
+            normalize_openai_base_url("https://ollama.com/v1/"),
+            "https://ollama.com/v1"
+        );
+        assert_eq!(
+            normalize_openai_base_url("https://api.deepseek.com/v1"),
+            "https://api.deepseek.com/v1"
+        );
     }
 }

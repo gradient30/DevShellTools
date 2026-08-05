@@ -38,7 +38,7 @@
         >
           <div class="font-medium">{c.category.title}</div>
           <div class="text-xs text-slate-500 mt-0.5">
-            <code>{c.category.name}</code> · {c.functions.length} 命令
+            <code>{c.category.name}</code> · {c.functions.filter((f) => /^[a-z]/.test(f.name)).length} 命令
           </div>
         </button>
       </li>

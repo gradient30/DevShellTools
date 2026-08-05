@@ -117,11 +117,15 @@ pub fn check() -> DstResult<ConsistencyReport> {
         }
     }
 
-    // 比较：实际 vs help（help 可能只含分类函数，不含 dsh/Show-* 等）
-    // help 应至少包含所有分类文件的函数
+    // 比较：实际 vs help（help 只含公共命令；内部辅助如 Assert-Git 不要求进帮助）
     let category_functions: Vec<String> = cats
         .iter()
-        .flat_map(|c| c.functions.iter().map(|f| f.name.clone()))
+        .flat_map(|c| {
+            c.functions
+                .iter()
+                .filter(|f| is_exported_name(&f.name))
+                .map(|f| f.name.clone())
+        })
         .collect();
     for f in &category_functions {
         if !help_commands.contains(f) {
@@ -129,9 +133,9 @@ pub fn check() -> DstResult<ConsistencyReport> {
         }
     }
 
-    // 检查每个函数是否有 synopsis
+    // 检查每个公共命令是否有 synopsis（内部辅助函数不要求）
     for c in &cats {
-        for f in &c.functions {
+        for f in c.functions.iter().filter(|f| is_exported_name(&f.name)) {
             if f.synopsis.is_empty() {
                 warnings.push(format!("函数 {}.{} 缺少 .SYNOPSIS", c.category.name, f.name));
             }

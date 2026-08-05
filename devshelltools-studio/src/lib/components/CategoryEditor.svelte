@@ -73,7 +73,9 @@
   }
 
   let canSave = $derived(syntaxOk === true && (safetyReport?.ok ?? false));
-  let funcCount = $derived(category?.functions.length ?? 0);
+  let funcCount = $derived(
+    category?.functions.filter((f) => /^[a-z]/.test(f.name)).length ?? 0
+  );
 </script>
 
 <section class="flex-1 flex flex-col overflow-hidden">
@@ -197,10 +199,10 @@
         </div>
       </div>
 
-      <!-- 命令列表 -->
+      <!-- 命令列表：只展示小写开头的公共命令（过滤 Assert-Git 等内部辅助） -->
       <CommandTable
         fileName={category.file_name}
-        functions={category.functions}
+        functions={category.functions.filter((f) => /^[a-z]/.test(f.name))}
         {onChanged}
         {onAiGenerate} />
     </div>

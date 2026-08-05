@@ -91,6 +91,11 @@ fn validate_public_fn_name(name: &str) -> DstResult<()> {
     let mut chars = name.chars();
     match chars.next() {
         Some(c) if c.is_ascii_lowercase() => {}
+        Some(c) if c.is_ascii_uppercase() => {
+            return Err(DstError::Other(format!(
+                "「{name}」是内部辅助函数（大写开头），不能在命令列表中编辑/删除/测试；请只管理小写公共命令"
+            )));
+        }
         _ => return Err(DstError::Other("函数名须以小写字母开头".into())),
     }
     if !name.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit()) {

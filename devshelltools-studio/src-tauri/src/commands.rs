@@ -47,7 +47,11 @@ pub struct ListCategoriesResult {
 
 #[tauri::command]
 pub fn list_categories() -> DstResult<ListCategoriesResult> {
-    let (categories, cached) = sync::scan_categories_cached_with_meta()?;
+    let (mut categories, cached) = sync::scan_categories_cached_with_meta()?;
+    // UI 只展示公共命令；Assert-Git 等内部辅助函数保留在源码中，但不出现在命令列表
+    for c in &mut categories {
+        c.functions = sync::filter_public_functions(&c.functions);
+    }
     Ok(ListCategoriesResult { categories, cached })
 }
 

@@ -173,9 +173,22 @@ pub fn all_export_names() -> DstResult<Vec<String>> {
     Ok(names)
 }
 
-/// 判断函数名是否应导出：首字母小写为公共命令，首字母大写为内部辅助。
-fn is_exported(name: &str) -> bool {
-    name.chars().next().map(|c| c.is_lowercase()).unwrap_or(false)
+/// 判断函数名是否为公共导出命令：首字母小写为公共命令，首字母大写为内部辅助
+///（如 `Assert-Git`、`Show-Dst*`、`Write-Dst*`）。
+pub fn is_exported(name: &str) -> bool {
+    name.chars()
+        .next()
+        .map(|c| c.is_ascii_lowercase())
+        .unwrap_or(false)
+}
+
+/// 仅保留公共命令（供 UI / 帮助展示）。
+pub fn filter_public_functions(functions: &[crate::ps_parser::PsFunction]) -> Vec<crate::ps_parser::PsFunction> {
+    functions
+        .iter()
+        .filter(|f| is_exported(&f.name))
+        .cloned()
+        .collect()
 }
 
 /// 重生成所有公共部分文件。原子操作：全部成功才写盘，失败回滚不写。
@@ -299,7 +312,7 @@ fn gen_help_data(cats: &[CategoryInfo]) -> String {
     let mut out = String::from("$script:DstHelpData = @{\n");
     for c in cats {
         out.push_str(&format!("    {} = @(\n", c.category.name));
-        for f in &c.functions {
+        for f in c.functions.iter().filter(|f| is_exported(&f.name)) {
             // 命令展示：若是 "set/test/show" 这种带空格的（lpr 子命令），保留；否则用函数名
             let cmd_display = &f.name;
             let synopsis = if f.synopsis.is_empty() { "(无说明)" } else { &f.synopsis };
@@ -390,13 +403,15 @@ mod tests {
         assert!(help.contains("$script:DstHelpData = @{"));
         // gg 函数应出现在 git 分类的帮助数据中（synopsis 来自 AST，含"图形化"关键字）
         assert!(help.contains("@(\"gg\",\"显示图形化精简提交历史，默认显示 20 条。\",\"gg\")"));
+        // 内部辅助函数不应进入帮助数据
+        assert!(!help.contains("Assert-Git"));
     }
 
     fn all_names_from(cats: &[CategoryInfo], extras: &[PsFunction]) -> Vec<String> {
         let mut v: Vec<String> = cats
             .iter()
-            .flat_map(|c| c.functions.iter().map(|f| f.name.clone()))
-            .chain(extras.iter().map(|f| f.name.clone()))
+            .flat_map(|c| c.functions.iter().filter(|f| is_exported(&f.name)).map(|f| f.name.clone()))
+            .chain(extras.iter().filter(|f| is_exported(&f.name)).map(|f| f.name.clone()))
             .collect();
         v.sort();
         v.dedup();

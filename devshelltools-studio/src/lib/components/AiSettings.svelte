@@ -74,7 +74,13 @@
       editing.base_url = p.openai_base_url;
       editing.model = p.openai_default_model;
     }
-    endpointNote = `已应用「${p.name}」端点`;
+    // Kimi K2/K3 系列固定 temperature=1，存 1 避免旧配置残留 0.7
+    if (presetId === "kimi" || editing.model.toLowerCase().startsWith("kimi-k")) {
+      editing.temperature = 1;
+      endpointNote = `已应用「${p.name}」端点（该模型固定采样，请求不传 temperature）`;
+    } else {
+      endpointNote = `已应用「${p.name}」端点`;
+    }
     testOk = false;
     testMsg = "";
   }
@@ -170,7 +176,10 @@
   }
 
   function pickModel(id: string) {
-    if (editing) editing.model = id;
+    if (editing) {
+      editing.model = id;
+      if (id.toLowerCase().startsWith("kimi-k")) editing.temperature = 1;
+    }
     showModelPicker = false;
     testOk = false;
   }

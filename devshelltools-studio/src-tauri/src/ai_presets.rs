@@ -65,6 +65,7 @@ pub fn list_presets() -> Vec<AiPreset> {
             name: "Kimi（月之暗面）".into(),
             openai_base_url: "https://api.moonshot.cn/v1".into(),
             anthropic_base_url: String::new(),
+            // K2/K3 系列固定采样参数，请求时不传 temperature
             openai_default_model: "kimi-k3".into(),
             anthropic_default_model: String::new(),
             supports_anthropic: false,
@@ -75,6 +76,16 @@ pub fn list_presets() -> Vec<AiPreset> {
             openai_base_url: "https://dashscope.aliyuncs.com/compatible-mode/v1".into(),
             anthropic_base_url: String::new(),
             openai_default_model: "qwen-plus".into(),
+            anthropic_default_model: String::new(),
+            supports_anthropic: false,
+        },
+        AiPreset {
+            id: "qianfan".into(),
+            name: "百度千帆".into(),
+            // 官方 OpenAI 兼容：https://cloud.baidu.com/doc/qianfan/s/Hmh4suq26
+            openai_base_url: "https://qianfan.baidubce.com/v2".into(),
+            anthropic_base_url: String::new(),
+            openai_default_model: "ernie-4.0-turbo-8k".into(),
             anthropic_default_model: String::new(),
             supports_anthropic: false,
         },
@@ -99,9 +110,10 @@ pub fn list_presets() -> Vec<AiPreset> {
         AiPreset {
             id: "ollama-cloud".into(),
             name: "Ollama Cloud".into(),
-            openai_base_url: "https://api.ollama.cloud/v1".into(),
+            // 官方 Cloud OpenAI 兼容端点（旧域名 api.ollama.cloud 已 503）
+            openai_base_url: "https://ollama.com/v1".into(),
             anthropic_base_url: String::new(),
-            openai_default_model: "llama3.2".into(),
+            openai_default_model: "gpt-oss:120b".into(),
             anthropic_default_model: String::new(),
             supports_anthropic: false,
         },
@@ -163,6 +175,10 @@ pub fn list_preset_views() -> Vec<AiPresetView> {
 /// 根据 base_url 检测所属提供商
 fn detect_preset(base_url: &str) -> Option<AiPreset> {
     let u = base_url.to_lowercase();
+    // 兼容已失效的 api.ollama.cloud 与本地 Ollama
+    if u.contains("ollama.com") || u.contains("ollama.cloud") || u.contains(":11434") {
+        return list_presets().into_iter().find(|p| p.id == "ollama-cloud");
+    }
     list_presets().into_iter().find(|p| {
         let oai = p.openai_base_url.to_lowercase();
         let ant = p.anthropic_base_url.to_lowercase();
@@ -262,7 +278,7 @@ mod tests {
     #[test]
     fn all_presets_have_openai_url() {
         let presets = list_presets();
-        assert_eq!(presets.len(), 11);
+        assert_eq!(presets.len(), 12);
         for p in &presets {
             assert!(!p.openai_base_url.is_empty(), "{} 缺 OpenAI 端点", p.name);
         }
@@ -271,10 +287,34 @@ mod tests {
     #[test]
     fn preset_views_one_per_provider() {
         let views = list_preset_views();
-        assert_eq!(views.len(), 11);
+        assert_eq!(views.len(), 12);
         // DeepSeek 应该只有一条，且 supports_anthropic = true
         let ds = views.iter().find(|v| v.id == "deepseek").unwrap();
         assert!(ds.supports_anthropic);
         assert!(!ds.anthropic_base_url.is_empty());
+    }
+
+    #[test]
+    fn qianfan_preset_endpoint() {
+        let p = list_presets()
+            .into_iter()
+            .find(|x| x.id == "qianfan")
+            .expect("缺少千帆预设");
+        assert_eq!(p.openai_base_url, "https://qianfan.baidubce.com/v2");
+        assert!(!p.openai_default_model.is_empty());
+        assert!(!p.supports_anthropic);
+    }
+
+    #[test]
+    fn ollama_cloud_uses_official_host() {
+        let p = list_presets()
+            .into_iter()
+            .find(|x| x.id == "ollama-cloud")
+            .expect("缺少 Ollama Cloud 预设");
+        assert_eq!(p.openai_base_url, "https://ollama.com/v1");
+        assert!(!p.openai_base_url.contains("api.ollama.cloud"));
+        // 旧失效域名仍应识别为该预设
+        let s = suggest_endpoint(AiProtocol::Openai, Some("https://api.ollama.cloud/v1"));
+        assert_eq!(s.base_url, "https://ollama.com/v1");
     }
 }

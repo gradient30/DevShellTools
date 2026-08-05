@@ -29,16 +29,44 @@
   let lastAutoToken = $state(0);
   let profilesReady = $state(false);
 
-  onMount(async () => {
-    try {
-      profiles = await api.listAiProfiles();
-      profileId = profiles.find((p) => p.key_configured)?.id ?? profiles[0]?.id ?? "";
-    } catch (e) {
-      errMsg = String(e);
-    } finally {
-      profilesReady = true;
+  /** 加载配置列表，并始终对齐设置页的默认 Profile */
+  async function loadProfiles(syncDefault = true) {
+    const meta = await api.getAiProfilesMeta();
+    profiles = meta.profiles;
+    const defaultId = meta.default_profile_id;
+    const defaultExists = !!defaultId && profiles.some((p) => p.id === defaultId);
+    if (syncDefault && defaultExists) {
+      profileId = defaultId!;
+      return;
     }
-    if (initialPrompt && !autoSendToken) input = initialPrompt;
+    // 默认无效时：保留当前选择（若仍存在），否则回退到已配 Key / 首项
+    if (profileId && profiles.some((p) => p.id === profileId)) return;
+    profileId =
+      (defaultExists ? defaultId! : null) ??
+      profiles.find((p) => p.key_configured)?.id ??
+      profiles[0]?.id ??
+      "";
+  }
+
+  onMount(() => {
+    void (async () => {
+      try {
+        await loadProfiles(true);
+      } catch (e) {
+        errMsg = String(e);
+      } finally {
+        profilesReady = true;
+      }
+      if (initialPrompt && !autoSendToken) input = initialPrompt;
+    })();
+
+    const onConfigChanged = () => {
+      void loadProfiles(true).catch((e) => {
+        errMsg = String(e);
+      });
+    };
+    window.addEventListener("ai-config-changed", onConfigChanged);
+    return () => window.removeEventListener("ai-config-changed", onConfigChanged);
   });
 
   $effect(() => {
