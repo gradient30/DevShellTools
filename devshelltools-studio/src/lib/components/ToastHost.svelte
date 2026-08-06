@@ -4,9 +4,9 @@
   function classes(t: ToastItem): string {
     const base =
       "pointer-events-auto max-w-lg w-full px-4 py-3 rounded-lg border shadow-lg text-sm backdrop-blur-sm animate-[toast-in_0.2s_ease-out]";
-    if (t.kind === "success") return `${base} bg-green-950/90 border-green-700 text-green-100`;
-    if (t.kind === "error") return `${base} bg-red-950/90 border-red-700 text-red-100`;
-    return `${base} bg-slate-900/90 border-slate-600 text-slate-100`;
+    if (t.kind === "success") return `${base} bg-dst-success-bg border-dst-success text-dst-success-fg`;
+    if (t.kind === "error") return `${base} bg-dst-danger-bg border-dst-danger-border text-dst-danger-fg`;
+    return `${base} bg-dst-elevated border-dst-border text-dst-fg`;
   }
 </script>
 
@@ -15,7 +15,7 @@
     <div class={classes(t)} role="status">
       <div class="flex items-start justify-between gap-3">
         <pre class="whitespace-pre-wrap font-sans text-sm leading-relaxed flex-1">{t.message}</pre>
-        <button class="text-slate-400 hover:text-white shrink-0" onclick={() => dismissToast(t.id)} aria-label="关闭">×</button>
+        <button class="text-dst-fg-muted hover:text-dst-fg shrink-0" onclick={() => dismissToast(t.id)} aria-label="关闭">×</button>
       </div>
     </div>
   {/each}

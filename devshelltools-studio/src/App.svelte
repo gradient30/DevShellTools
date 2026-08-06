@@ -21,6 +21,7 @@
   import ToolsPage from "./lib/components/ToolsPage.svelte";
   import ToastHost from "./lib/components/ToastHost.svelte";
   import BusyOverlay from "./lib/components/BusyOverlay.svelte";
+  import ThemeSwitch from "./lib/components/ThemeSwitch.svelte";
   import { buildCommandReviewPrompt, extractFunctionSource } from "./lib/psSource";
 
   type Tab = "manage" | "chat" | "settings" | "tools";
@@ -343,37 +344,39 @@
 
     </script>
 
-<main class="h-screen flex flex-col bg-slate-950">
+<main class="h-screen flex flex-col bg-dst-bg">
   <ToastHost />
   <BusyOverlay />
-  <header class="px-5 py-3 bg-slate-900/80 border-b border-slate-700 flex items-center justify-between">
+  <header class="px-5 py-3 bg-dst-surface border-b border-dst-border flex items-center justify-between">
     <div>
-      <h1 class="text-lg font-bold text-cyan-300">DevShellTools Studio</h1>
-      <p class="text-xs text-slate-500">模板 v1.0.5 · M6</p>
+      <h1 class="text-lg font-bold text-dst-accent">DevShellTools Studio</h1>
+      <p class="text-xs text-dst-fg-muted">模板 v1.0.5 · M6</p>
     </div>
     <nav class="flex gap-1 items-center">
       <button
-        class="px-3 py-1 text-xs rounded {tab === 'manage' ? 'bg-cyan-600 text-white' : 'bg-slate-700 text-slate-300 hover:bg-slate-600'}"
+        class="px-3 py-1 text-xs rounded {tab === 'manage' ? 'bg-dst-accent text-dst-accent-fg' : 'bg-dst-muted text-dst-fg hover:bg-dst-menu-hover'}"
         onclick={() => (tab = "manage")}>管理</button
       >
       <button
-        class="px-3 py-1 text-xs rounded {tab === 'chat' ? 'bg-cyan-600 text-white' : 'bg-slate-700 text-slate-300 hover:bg-slate-600'}"
+        class="px-3 py-1 text-xs rounded {tab === 'chat' ? 'bg-dst-accent text-dst-accent-fg' : 'bg-dst-muted text-dst-fg hover:bg-dst-menu-hover'}"
         onclick={() => (tab = "chat")}>AI 助手 {aiReadyLoading ? "…" : aiReady ? "" : "(未配置)"}</button
       >
       <button
-        class="px-3 py-1 text-xs rounded {tab === 'tools' ? 'bg-cyan-600 text-white' : 'bg-slate-700 text-slate-300 hover:bg-slate-600'}"
+        class="px-3 py-1 text-xs rounded {tab === 'tools' ? 'bg-dst-accent text-dst-accent-fg' : 'bg-dst-muted text-dst-fg hover:bg-dst-menu-hover'}"
         onclick={() => (tab = "tools")}>工具箱</button
       >
       <button
-        class="px-3 py-1 text-xs rounded {tab === 'settings' ? 'bg-cyan-600 text-white' : 'bg-slate-700 text-slate-300 hover:bg-slate-600'}"
+        class="px-3 py-1 text-xs rounded {tab === 'settings' ? 'bg-dst-accent text-dst-accent-fg' : 'bg-dst-muted text-dst-fg hover:bg-dst-menu-hover'}"
         onclick={() => (tab = "settings")}>设置</button
       >
+      <span class="w-px h-5 bg-dst-border mx-1"></span>
+      <ThemeSwitch />
       {#if $workspace?.initialized || installStatus?.installed}
-        <span class="w-px h-5 bg-slate-700 mx-1"></span>
+        <span class="w-px h-5 bg-dst-border mx-1"></span>
         <button
           class="px-3 py-1 text-xs rounded disabled:opacity-50 {installStatus?.installed
-            ? 'bg-amber-700 hover:bg-amber-600 text-white'
-            : 'bg-emerald-700 hover:bg-emerald-600 text-white'}"
+            ? 'bg-dst-btn-warning hover:opacity-90 text-dst-btn-warning-fg'
+            : 'bg-dst-btn-success hover:opacity-90 text-dst-btn-success-fg'}"
           onclick={handleInstallToggle}
           disabled={installBusy || installStatus === null}
           title={installStatus
@@ -392,44 +395,44 @@
   </header>
 
   {#if $errorMsg}
-    <div class="px-4 py-2 bg-red-900/50 border-b border-red-700 text-red-200 text-sm flex justify-between">
+    <div class="px-4 py-2 bg-dst-danger-bg border-b border-dst-danger-border text-dst-danger-fg text-sm flex justify-between">
       <span>{$errorMsg}</span>
-      <button class="ml-3 text-red-300 hover:text-red-100" onclick={clearMessages}>×</button>
+      <button class="ml-3 text-dst-danger hover:text-dst-danger-fg" onclick={clearMessages}>×</button>
     </div>
   {/if}
   {#if $successMsg}
-    <div class="px-4 py-2 bg-green-900/50 border-b border-green-700 text-green-200 text-sm flex justify-between">
+    <div class="px-4 py-2 bg-dst-success-bg border-b border-dst-success text-dst-success-fg text-sm flex justify-between">
       <span>{$successMsg}</span>
-      <button class="ml-3 text-green-300 hover:text-green-100" onclick={clearMessages}>×</button>
+      <button class="ml-3 text-dst-success hover:text-dst-success-fg" onclick={clearMessages}>×</button>
     </div>
   {/if}
 
   {#if $loading && !$workspace}
-    <div class="flex-1 flex flex-col items-center justify-center text-slate-400 gap-3">
-      <div class="h-8 w-8 border-2 border-cyan-500/30 border-t-cyan-400 rounded-full animate-spin"></div>
+    <div class="flex-1 flex flex-col items-center justify-center text-dst-fg-muted gap-3">
+      <div class="h-8 w-8 border-2 border-dst-accent/30 border-t-cyan-400 rounded-full animate-spin"></div>
       <p class="text-sm">正在连接工作区…</p>
     </div>
   {:else if !$workspace?.initialized}
     <div class="flex-1 flex items-center justify-center p-6">
-      <div class="bg-slate-800/60 rounded-lg p-6 border border-slate-700 max-w-md w-full text-center">
-        <h2 class="text-lg font-semibold text-amber-300 mb-2">首次使用</h2>
-        <p class="text-sm text-slate-300 mb-1">未检测到工作区。</p>
-        <p class="text-xs text-slate-400 mb-4">
-          将在 <code class="text-cyan-300">{$workspace?.root ?? ""}</code> 初始化 DevShellTools 1.0.5 模板。
+      <div class="bg-dst-elevated rounded-lg p-6 border border-dst-border max-w-md w-full text-center">
+        <h2 class="text-lg font-semibold text-dst-warning-fg mb-2">首次使用</h2>
+        <p class="text-sm text-dst-fg mb-1">未检测到工作区。</p>
+        <p class="text-xs text-dst-fg-muted mb-4">
+          将在 <code class="text-dst-accent">{$workspace?.root ?? ""}</code> 初始化 DevShellTools 1.0.5 模板。
         </p>
         {#if $initProgress}
           <div class="mb-4 text-left">
-            <div class="flex justify-between text-xs text-slate-400 mb-1">
+            <div class="flex justify-between text-xs text-dst-fg-muted mb-1">
               <span>{$initProgress.label}</span>
               <span>{$initProgress.percent}%</span>
             </div>
-            <div class="h-2 bg-slate-900 rounded overflow-hidden">
-              <div class="h-full bg-cyan-500 transition-all duration-300" style="width: {$initProgress.percent}%"></div>
+            <div class="h-2 bg-dst-surface rounded overflow-hidden">
+              <div class="h-full bg-dst-accent text-dst-accent-fg transition-all duration-300" style="width: {$initProgress.percent}%"></div>
             </div>
           </div>
         {/if}
         <button
-          class="px-4 py-2 bg-cyan-600 hover:bg-cyan-500 text-white rounded text-sm disabled:opacity-50"
+          class="px-4 py-2 bg-dst-accent hover:bg-dst-accent-hover text-dst-accent-fg rounded text-sm disabled:opacity-50"
           onclick={handleInit}
           disabled={$loading}>
           {$loading ? "初始化中…" : "初始化工作区"}
@@ -439,10 +442,10 @@
   {:else}
     <div class="flex-1 flex flex-col min-h-0 overflow-hidden">
     {#if categoriesLoading}
-      <div class="px-4 py-2 bg-cyan-950/70 border-b border-cyan-800/80 text-cyan-100 text-sm flex items-center gap-3 shrink-0">
-        <div class="h-4 w-4 border-2 border-cyan-400/30 border-t-cyan-400 rounded-full animate-spin shrink-0"></div>
+      <div class="px-4 py-2 bg-dst-surface border-b border-dst-accent text-dst-fg text-sm flex items-center gap-3 shrink-0">
+        <div class="h-4 w-4 border-2 border-dst-accent/30 border-t-cyan-400 rounded-full animate-spin shrink-0"></div>
         <span>{categoriesLoadMsg || "正在加载分类信息…"}</span>
-        <span class="text-xs text-cyan-400/80 ml-auto">首次约 5–10 秒，之后从缓存秒开；加载期间请稍候</span>
+        <span class="text-xs text-dst-accent/80 ml-auto">首次约 5–10 秒，之后从缓存秒开；加载期间请稍候</span>
       </div>
     {/if}
     <div class="flex-1 overflow-hidden relative min-h-0">
@@ -452,12 +455,12 @@
         aria-hidden={tab !== "manage"}>
         {#if categoriesLoading}
           <div
-            class="absolute inset-0 z-20 bg-slate-950/40 backdrop-blur-[1px] flex items-center justify-center pointer-events-auto"
+            class="absolute inset-0 z-20 bg-dst-bg/40 backdrop-blur-[1px] flex items-center justify-center pointer-events-auto"
             aria-busy="true">
-            <div class="bg-slate-900 border border-slate-700 rounded-lg px-5 py-4 text-sm text-slate-200 shadow-lg max-w-sm text-center">
-              <div class="mx-auto mb-3 h-6 w-6 border-2 border-cyan-400/30 border-t-cyan-400 rounded-full animate-spin"></div>
+            <div class="bg-dst-surface border border-dst-border rounded-lg px-5 py-4 text-sm text-dst-fg shadow-lg max-w-sm text-center">
+              <div class="mx-auto mb-3 h-6 w-6 border-2 border-dst-accent/30 border-t-cyan-400 rounded-full animate-spin"></div>
               <p>{categoriesLoadMsg || "正在解析分类元数据…"}</p>
-              <p class="text-xs text-slate-500 mt-2">后台调用 PowerShell AST，界面暂时锁定以免误点</p>
+              <p class="text-xs text-dst-fg-muted mt-2">后台调用 PowerShell AST，界面暂时锁定以免误点</p>
             </div>
           </div>
         {/if}
@@ -469,41 +472,41 @@
           onDelete={handleDelete}
           onChanged={loadCategories}
           onAiGenerate={handleAiGenerate} />
-        <aside class="w-64 shrink-0 bg-slate-900/60 border-l border-slate-700 overflow-y-auto p-3">
+        <aside class="w-64 shrink-0 bg-dst-surface border-l border-dst-border overflow-y-auto p-3">
           <div class="flex items-center gap-1.5 mb-2">
-            <h3 class="text-xs font-semibold text-slate-400">一致性校验</h3>
+            <h3 class="text-xs font-semibold text-dst-fg-muted">一致性校验</h3>
             <button
               type="button"
               class="inline-flex h-4 w-4 items-center justify-center rounded-full border text-[10px] leading-none transition-colors {sidebarTip === 'consistency'
-                ? 'border-cyan-500 text-cyan-300 bg-cyan-950/50'
-                : 'border-slate-600 text-slate-400 hover:border-cyan-500 hover:text-cyan-300'}"
+                ? 'border-dst-accent text-dst-accent bg-dst-elevated'
+                : 'border-dst-border text-dst-fg-muted hover:border-dst-accent hover:text-dst-accent'}"
               onclick={() => toggleSidebarTip("consistency")}
               aria-expanded={sidebarTip === "consistency"}
               aria-label="一致性校验说明">?</button>
           </div>
           {#if sidebarTip === "consistency"}
-            <p class="mb-3 rounded border border-slate-700 bg-slate-950/80 px-2.5 py-2 text-[11px] leading-relaxed text-slate-300">
+            <p class="mb-3 rounded border border-dst-border bg-dst-bg/80 px-2.5 py-2 text-[11px] leading-relaxed text-dst-fg">
               {TIP_CONSISTENCY}
             </p>
           {/if}
           {#if categoriesLoading || !consistency}
-            <div class="h-16 bg-slate-800/40 rounded animate-pulse"></div>
+            <div class="h-16 bg-dst-elevated rounded animate-pulse"></div>
             {#if categoriesLoading}
-              <p class="text-xs text-slate-500 mt-2">等待分类解析完成…</p>
+              <p class="text-xs text-dst-fg-muted mt-2">等待分类解析完成…</p>
             {/if}
           {:else if consistency}
             <div
               class="p-2 rounded text-xs mb-3 {consistency.ok
-                ? 'bg-green-900/40 border border-green-700 text-green-200'
-                : 'bg-red-900/40 border border-red-700 text-red-200'}">
+                ? 'bg-dst-success-bg border border-dst-success text-dst-success-fg'
+                : 'bg-dst-danger-bg border border-dst-danger-border text-dst-danger-fg'}">
               {consistency.ok ? "✓ 通过" : "✗ 不一致"}
             </div>
             {#if consistency.errors.length > 0}
-              <ul class="text-xs text-red-200 space-y-0.5 mb-2">
+              <ul class="text-xs text-dst-danger-fg space-y-0.5 mb-2">
                 {#each consistency.errors as e}<li>· {e}</li>{/each}
               </ul>
             {/if}
-            <div class="text-xs text-slate-500 mb-3">
+            <div class="text-xs text-dst-fg-muted mb-3">
               实际 {consistency.actual_functions.length} · psd1 {consistency.psd1_exports.length}
             </div>
           {/if}
@@ -511,21 +514,21 @@
           <div class="mt-4 flex flex-wrap items-center gap-2">
             <div class="flex items-center gap-1">
               <button
-                class="px-2 py-1 text-xs bg-slate-700 hover:bg-slate-600 rounded"
+                class="px-2 py-1 text-xs bg-dst-muted hover:bg-dst-muted rounded"
                 onclick={handleSync}>同步公共部分</button>
               <button
                 type="button"
                 class="inline-flex h-4 w-4 items-center justify-center rounded-full border text-[10px] leading-none transition-colors {sidebarTip === 'sync'
-                  ? 'border-cyan-500 text-cyan-300 bg-cyan-950/50'
-                  : 'border-slate-600 text-slate-400 hover:border-cyan-500 hover:text-cyan-300'}"
+                  ? 'border-dst-accent text-dst-accent bg-dst-elevated'
+                  : 'border-dst-border text-dst-fg-muted hover:border-dst-accent hover:text-dst-accent'}"
                 onclick={() => toggleSidebarTip("sync")}
                 aria-expanded={sidebarTip === "sync"}
                 aria-label="同步公共部分说明">?</button>
             </div>
-            <button class="px-2 py-1 text-xs bg-cyan-600 hover:bg-cyan-500 rounded" onclick={() => (showNewDialog = true)}>新建分类</button>
+            <button class="px-2 py-1 text-xs bg-dst-accent text-dst-accent-fg hover:bg-dst-accent-hover rounded" onclick={() => (showNewDialog = true)}>新建分类</button>
           </div>
           {#if sidebarTip === "sync"}
-            <p class="mt-2 rounded border border-slate-700 bg-slate-950/80 px-2.5 py-2 text-[11px] leading-relaxed text-slate-300">
+            <p class="mt-2 rounded border border-dst-border bg-dst-bg/80 px-2.5 py-2 text-[11px] leading-relaxed text-dst-fg">
               {TIP_SYNC}
             </p>
           {/if}
@@ -543,12 +546,12 @@
             onApplyCode={handleApplyCode}
             onOpenSettings={() => (tab = "settings")} />
         {:else if aiReadyLoading}
-          <div class="h-full flex items-center justify-center text-slate-400 text-sm">正在检查 AI 配置…</div>
+          <div class="h-full flex items-center justify-center text-dst-fg-muted text-sm">正在检查 AI 配置…</div>
         {:else}
           <div class="h-full flex items-center justify-center p-6">
             <div class="text-center">
-              <p class="text-sm text-amber-300 mb-3">AI 未配置</p>
-              <button class="px-4 py-2 bg-cyan-600 hover:bg-cyan-500 rounded text-sm" onclick={() => (tab = "settings")}>前往设置</button>
+              <p class="text-sm text-dst-warning-fg mb-3">AI 未配置</p>
+              <button class="px-4 py-2 bg-dst-accent text-dst-accent-fg hover:bg-dst-accent-hover rounded text-sm" onclick={() => (tab = "settings")}>前往设置</button>
             </div>
           </div>
         {/if}

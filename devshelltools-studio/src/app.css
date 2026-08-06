@@ -1,12 +1,252 @@
 @import "tailwindcss";
 
-:root {
-  color-scheme: light dark;
+/*
+ * 语义色：组件只用 dst-*，禁止依赖「碰巧对比」的裸 slate 灰阶。
+ * 三主题各自成对校准 bg↔fg / btn↔btn-fg / menu↔menu-fg / input↔placeholder。
+ */
+
+@theme {
+  --color-dst-bg: var(--dst-bg);
+  --color-dst-surface: var(--dst-surface);
+  --color-dst-elevated: var(--dst-elevated);
+  --color-dst-muted: var(--dst-muted);
+  --color-dst-fg: var(--dst-fg);
+  --color-dst-fg-muted: var(--dst-fg-muted);
+  --color-dst-fg-subtle: var(--dst-fg-subtle);
+  --color-dst-border: var(--dst-border);
+  --color-dst-accent: var(--dst-accent);
+  --color-dst-accent-fg: var(--dst-accent-fg);
+  --color-dst-accent-hover: var(--dst-accent-hover);
+  --color-dst-input: var(--dst-input-bg);
+  --color-dst-input-fg: var(--dst-input-fg);
+  --color-dst-placeholder: var(--dst-placeholder);
+  --color-dst-menu: var(--dst-menu-bg);
+  --color-dst-menu-fg: var(--dst-menu-fg);
+  --color-dst-menu-hover: var(--dst-menu-hover);
+  --color-dst-danger: var(--dst-danger);
+  --color-dst-danger-fg: var(--dst-danger-fg);
+  --color-dst-danger-bg: var(--dst-danger-bg);
+  --color-dst-danger-border: var(--dst-danger-border);
+  --color-dst-success: var(--dst-success);
+  --color-dst-success-fg: var(--dst-success-fg);
+  --color-dst-success-bg: var(--dst-success-bg);
+  --color-dst-warning: var(--dst-warning);
+  --color-dst-warning-fg: var(--dst-warning-fg);
+  --color-dst-warning-bg: var(--dst-warning-bg);
+  --color-dst-code: var(--dst-code-bg);
+  --color-dst-bubble-user: var(--dst-bubble-user);
+  --color-dst-bubble-user-fg: var(--dst-bubble-user-fg);
+  --color-dst-bubble-ai: var(--dst-bubble-ai);
+  --color-dst-bubble-ai-fg: var(--dst-bubble-ai-fg);
+  --color-dst-btn-danger: var(--dst-btn-danger-bg);
+  --color-dst-btn-danger-fg: var(--dst-btn-danger-fg);
+  --color-dst-btn-success: var(--dst-btn-success-bg);
+  --color-dst-btn-success-fg: var(--dst-btn-success-fg);
+  --color-dst-btn-warning: var(--dst-btn-warning-bg);
+  --color-dst-btn-warning-fg: var(--dst-btn-warning-fg);
 }
 
+/* 暗（默认） */
+:root,
+[data-theme="dark"] {
+  --dst-bg: #020617;
+  --dst-surface: #0f172a;
+  --dst-elevated: #1e293b;
+  --dst-muted: #334155;
+  --dst-fg: #e2e8f0;
+  --dst-fg-muted: #94a3b8;
+  --dst-fg-subtle: #64748b;
+  --dst-border: #334155;
+  --dst-accent: #0891b2;
+  --dst-accent-fg: #f0fdfa;
+  --dst-accent-hover: #06b6d4;
+  --dst-input-bg: #0f172a;
+  --dst-input-fg: #f1f5f9;
+  --dst-placeholder: #64748b;
+  --dst-menu-bg: #1e293b;
+  --dst-menu-fg: #f1f5f9;
+  --dst-menu-hover: #334155;
+  --dst-danger: #fca5a5;
+  --dst-danger-fg: #fecaca;
+  --dst-danger-bg: #450a0a;
+  --dst-danger-border: #b91c1c;
+  --dst-success: #6ee7b7;
+  --dst-success-fg: #a7f3d0;
+  --dst-success-bg: #064e3b;
+  --dst-warning: #fcd34d;
+  --dst-warning-fg: #fde68a;
+  --dst-warning-bg: #78350f;
+  --dst-code-bg: #020617;
+  --dst-bubble-user: #0e7490;
+  --dst-bubble-user-fg: #ecfeff;
+  --dst-bubble-ai: #1e293b;
+  --dst-bubble-ai-fg: #e2e8f0;
+  --dst-btn-danger-bg: #b91c1c;
+  --dst-btn-danger-fg: #fff1f2;
+  --dst-btn-success-bg: #047857;
+  --dst-btn-success-fg: #ecfdf5;
+  --dst-btn-warning-bg: #b45309;
+  --dst-btn-warning-fg: #fffbeb;
+  --dst-grid: transparent;
+}
+
+/* 明 */
+[data-theme="light"] {
+  --dst-bg: #e2e8f0;
+  --dst-surface: #f8fafc;
+  --dst-elevated: #ffffff;
+  --dst-muted: #cbd5e1;
+  --dst-fg: #0f172a;
+  --dst-fg-muted: #334155;
+  --dst-fg-subtle: #475569;
+  --dst-border: #94a3b8;
+  --dst-accent: #0e7490;
+  --dst-accent-fg: #ffffff;
+  --dst-accent-hover: #155e75;
+  --dst-input-bg: #ffffff;
+  --dst-input-fg: #0f172a;
+  --dst-placeholder: #64748b;
+  --dst-menu-bg: #ffffff;
+  --dst-menu-fg: #0f172a;
+  --dst-menu-hover: #e2e8f0;
+  --dst-danger: #b91c1c;
+  --dst-danger-fg: #7f1d1d;
+  --dst-danger-bg: #fee2e2;
+  --dst-danger-border: #dc2626;
+  --dst-success: #047857;
+  --dst-success-fg: #064e3b;
+  --dst-success-bg: #d1fae5;
+  --dst-warning: #b45309;
+  --dst-warning-fg: #78350f;
+  --dst-warning-bg: #fef3c7;
+  --dst-code-bg: #f1f5f9;
+  --dst-bubble-user: #0e7490;
+  --dst-bubble-user-fg: #ffffff;
+  --dst-bubble-ai: #ffffff;
+  --dst-bubble-ai-fg: #0f172a;
+  --dst-btn-danger-bg: #b91c1c;
+  --dst-btn-danger-fg: #ffffff;
+  --dst-btn-success-bg: #047857;
+  --dst-btn-success-fg: #ffffff;
+  --dst-btn-warning-bg: #b45309;
+  --dst-btn-warning-fg: #ffffff;
+  --dst-grid: transparent;
+}
+
+/* 彩：深底 + 多色强调 + 网格纹理 */
+[data-theme="color"] {
+  --dst-bg: #0a1628;
+  --dst-surface: #12263f;
+  --dst-elevated: #1a3554;
+  --dst-muted: #244066;
+  --dst-fg: #f0f9ff;
+  --dst-fg-muted: #a5d8ff;
+  --dst-fg-subtle: #7dd3fc;
+  --dst-border: #2dd4bf;
+  --dst-accent: #22d3ee;
+  --dst-accent-fg: #082f49;
+  --dst-accent-hover: #67e8f9;
+  --dst-input-bg: #0c1e33;
+  --dst-input-fg: #f0f9ff;
+  --dst-placeholder: #7dd3fc;
+  --dst-menu-bg: #12263f;
+  --dst-menu-fg: #f0f9ff;
+  --dst-menu-hover: #1a3554;
+  --dst-danger: #fb7185;
+  --dst-danger-fg: #fff1f2;
+  --dst-danger-bg: #4c0519;
+  --dst-danger-border: #e11d48;
+  --dst-success: #4ade80;
+  --dst-success-fg: #052e16;
+  --dst-success-bg: #14532d;
+  --dst-warning: #fbbf24;
+  --dst-warning-fg: #1c1917;
+  --dst-warning-bg: #78350f;
+  --dst-code-bg: #071525;
+  --dst-bubble-user: #0891b2;
+  --dst-bubble-user-fg: #ecfeff;
+  --dst-bubble-ai: #1a3554;
+  --dst-bubble-ai-fg: #f0f9ff;
+  --dst-btn-danger-bg: #e11d48;
+  --dst-btn-danger-fg: #fff1f2;
+  --dst-btn-success-bg: #059669;
+  --dst-btn-success-fg: #ecfdf5;
+  --dst-btn-warning-bg: #d97706;
+  --dst-btn-warning-fg: #fffbeb;
+  --dst-grid: rgba(45, 212, 191, 0.07);
+}
+
+html,
 body {
   margin: 0;
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", sans-serif;
-  background: #0f172a;
-  color: #e2e8f0;
+  min-height: 100%;
+  font-family:
+    -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", sans-serif;
+  background-color: var(--dst-bg);
+  color: var(--dst-fg);
+}
+
+/* 彩主题轻微网格（不降低正文对比度） */
+[data-theme="color"] body {
+  background-image:
+    linear-gradient(var(--dst-grid) 1px, transparent 1px),
+    linear-gradient(90deg, var(--dst-grid) 1px, transparent 1px);
+  background-size: 24px 24px;
+  background-color: var(--dst-bg);
+}
+
+/* 原生控件：前后景成对，避免 option 白底白字 / 深底深字 */
+select,
+option,
+optgroup {
+  background-color: var(--dst-menu-bg);
+  color: var(--dst-menu-fg);
+}
+
+input,
+textarea,
+select {
+  background-color: var(--dst-input-bg);
+  color: var(--dst-input-fg);
+  border-color: var(--dst-border);
+}
+
+input::placeholder,
+textarea::placeholder {
+  color: var(--dst-placeholder);
+  opacity: 1;
+}
+
+/* 主题三格 */
+.dst-theme-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 2px;
+  padding: 2px;
+  border-radius: 0.5rem;
+  border: 1px solid var(--dst-border);
+  background: var(--dst-elevated);
+}
+
+.dst-theme-grid button {
+  min-width: 1.75rem;
+  padding: 0.25rem 0.5rem;
+  font-size: 0.75rem;
+  line-height: 1.25;
+  border-radius: 0.375rem;
+  color: var(--dst-fg-muted);
+  background: transparent;
+  border: none;
+  cursor: pointer;
+}
+
+.dst-theme-grid button:hover {
+  color: var(--dst-fg);
+  background: var(--dst-menu-hover);
+}
+
+.dst-theme-grid button[aria-pressed="true"] {
+  background: var(--dst-accent);
+  color: var(--dst-accent-fg);
+  font-weight: 600;
 }

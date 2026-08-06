@@ -80,7 +80,7 @@
 
 <section class="flex-1 flex flex-col overflow-hidden">
   {#if !category}
-    <div class="flex-1 flex items-center justify-center text-slate-500 text-sm">
+    <div class="flex-1 flex items-center justify-center text-dst-fg-muted text-sm">
       <div class="text-center">
         <div class="text-4xl mb-3 opacity-30">📋</div>
         <p>请从左侧选择一个分类</p>
@@ -88,26 +88,26 @@
     </div>
   {:else if view === "source"}
     <!-- 源码编辑视图 -->
-    <div class="px-4 py-2.5 border-b border-slate-700 flex items-center justify-between bg-slate-900/50">
+    <div class="px-4 py-2.5 border-b border-dst-border flex items-center justify-between bg-dst-surface">
       <div class="flex items-center gap-3">
-        <button class="text-slate-400 hover:text-slate-200 text-sm" onclick={() => view = "overview"}>
+        <button class="text-dst-fg-muted hover:text-dst-fg text-sm" onclick={() => view = "overview"}>
           ← 返回概览
         </button>
-        <span class="text-slate-600">|</span>
-        <h2 class="text-sm font-mono text-cyan-300">{category.file_name}</h2>
-        {#if dirty}<span class="text-xs text-amber-400">● 未保存</span>{/if}
+        <span class="text-dst-fg-subtle">|</span>
+        <h2 class="text-sm font-mono text-dst-accent">{category.file_name}</h2>
+        {#if dirty}<span class="text-xs text-dst-warning">● 未保存</span>{/if}
       </div>
       <div class="flex items-center gap-2">
-        <button class="px-3 py-1 text-xs bg-slate-700 hover:bg-slate-600 rounded transition-colors" onclick={validate}>
+        <button class="px-3 py-1 text-xs bg-dst-muted hover:bg-dst-muted rounded transition-colors" onclick={validate}>
           校验
         </button>
         <button
-          class="px-3 py-1 text-xs bg-cyan-600 hover:bg-cyan-500 rounded transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+          class="px-3 py-1 text-xs bg-dst-accent text-dst-accent-fg hover:bg-dst-accent-hover rounded transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
           onclick={save}
           disabled={!canSave}>
           保存
         </button>
-        <button class="px-3 py-1 text-xs bg-slate-700 hover:bg-slate-600 rounded transition-colors" onclick={cancelEdit}>
+        <button class="px-3 py-1 text-xs bg-dst-muted hover:bg-dst-muted rounded transition-colors" onclick={cancelEdit}>
           取消
         </button>
       </div>
@@ -115,28 +115,28 @@
 
     <!-- 校验状态条 -->
     {#if syntaxOk === true || syntaxOk === false || (safetyReport && !safetyReport.ok)}
-      <div class="px-4 py-1.5 border-b border-slate-700 space-y-1">
+      <div class="px-4 py-1.5 border-b border-dst-border space-y-1">
         {#if syntaxOk === true}
-          <div class="flex items-center gap-1.5 text-xs text-green-400">
+          <div class="flex items-center gap-1.5 text-xs text-dst-success">
             <span>✓</span> 语法校验通过 · {lineCount} 行
           </div>
         {:else if syntaxOk === false}
-          <div class="text-xs text-red-400">✗ 语法错误：{syntaxErr}</div>
+          <div class="text-xs text-dst-danger">✗ 语法错误：{syntaxErr}</div>
         {/if}
         {#if safetyReport && !safetyReport.ok}
-          <div class="text-xs text-red-400">✗ 安全拦截：{safetyReport.violations.join("；")}</div>
+          <div class="text-xs text-dst-danger">✗ 安全拦截：{safetyReport.violations.join("；")}</div>
         {/if}
         {#if safetyReport?.ok}
-          <div class="text-xs text-green-400">✓ 安全检查通过</div>
+          <div class="text-xs text-dst-success">✓ 安全检查通过</div>
         {/if}
       </div>
     {/if}
 
     <!-- 代码编辑区：行号 + textarea -->
-    <div class="flex-1 overflow-auto bg-slate-950">
+    <div class="flex-1 overflow-auto bg-dst-bg">
       <div class="flex min-h-full">
         <!-- 行号栏 -->
-        <div class="select-none py-3 px-2 text-right text-xs font-mono text-slate-600 bg-slate-900/30 border-r border-slate-800 leading-5 shrink-0" style="min-width: 3rem;">
+        <div class="select-none py-3 px-2 text-right text-xs font-mono text-dst-fg-subtle bg-dst-surface/30 border-r border-dst-border leading-5 shrink-0" style="min-width: 3rem;">
           {#each draftLines as _, i}
             <div>{i + 1}</div>
           {/each}
@@ -146,14 +146,14 @@
           bind:value={draft}
           oninput={onInput}
           rows="30"
-          class="flex-1 py-3 px-3 text-xs font-mono bg-slate-950 text-slate-200 leading-5 resize-none border-0 outline-none whitespace-pre"
+          class="flex-1 py-3 px-3 text-xs font-mono bg-dst-bg text-dst-fg leading-5 resize-none border-0 outline-none whitespace-pre"
           spellcheck="false"
           style="tab-size: 4;"></textarea>
       </div>
     </div>
 
     <!-- 底部状态栏 -->
-    <div class="px-4 py-1.5 border-t border-slate-700 bg-slate-900/50 flex items-center justify-between text-xs text-slate-500">
+    <div class="px-4 py-1.5 border-t border-dst-border bg-dst-surface flex items-center justify-between text-xs text-dst-fg-muted">
       <span>{lineCount} 行 · {draft.length} 字符</span>
       <span class="font-mono">PowerShell · UTF-8</span>
     </div>
@@ -163,20 +163,20 @@
       <!-- 分类标题区 -->
       <div class="mb-5 flex items-start justify-between">
         <div class="flex items-center gap-3">
-          <div class="w-10 h-10 rounded-lg bg-cyan-900/40 border border-cyan-700 flex items-center justify-center text-cyan-300 text-lg shrink-0">
+          <div class="w-10 h-10 rounded-lg bg-dst-elevated border border-dst-accent flex items-center justify-center text-dst-accent text-lg shrink-0">
             📦
           </div>
           <div>
-            <h2 class="text-lg font-semibold text-cyan-300">{category.category.title}</h2>
-            <p class="text-xs text-slate-400 mt-0.5">{category.category.description}</p>
+            <h2 class="text-lg font-semibold text-dst-accent">{category.category.title}</h2>
+            <p class="text-xs text-dst-fg-muted mt-0.5">{category.category.description}</p>
           </div>
         </div>
         <div class="flex gap-2">
-          <button class="px-3 py-1.5 text-sm bg-slate-700 hover:bg-slate-600 rounded transition-colors" onclick={startEdit}>
+          <button class="px-3 py-1.5 text-sm bg-dst-muted hover:bg-dst-muted rounded transition-colors" onclick={startEdit}>
             ✏️ 编辑源码
           </button>
           <button
-            class="px-3 py-1.5 text-sm bg-red-800 hover:bg-red-700 rounded transition-colors"
+            class="px-3 py-1.5 text-sm bg-dst-btn-danger text-dst-btn-danger-fg hover:opacity-90 rounded transition-colors"
             onclick={() => onDelete(category.file_name)}>
             🗑 删除
           </button>
@@ -185,17 +185,17 @@
 
       <!-- 元数据卡片 -->
       <div class="mb-5 grid grid-cols-3 gap-3">
-        <div class="bg-slate-800/40 rounded-lg p-3 border border-slate-700/50">
-          <div class="text-xs text-slate-500 mb-1">关键字</div>
-          <code class="text-sm text-cyan-300 font-mono">{category.category.name}</code>
+        <div class="bg-dst-elevated rounded-lg p-3 border border-dst-border">
+          <div class="text-xs text-dst-fg-muted mb-1">关键字</div>
+          <code class="text-sm text-dst-accent font-mono">{category.category.name}</code>
         </div>
-        <div class="bg-slate-800/40 rounded-lg p-3 border border-slate-700/50">
-          <div class="text-xs text-slate-500 mb-1">别名</div>
-          <span class="text-sm text-slate-200">{category.category.aliases.length > 0 ? category.category.aliases.join(", ") : "无"}</span>
+        <div class="bg-dst-elevated rounded-lg p-3 border border-dst-border">
+          <div class="text-xs text-dst-fg-muted mb-1">别名</div>
+          <span class="text-sm text-dst-fg">{category.category.aliases.length > 0 ? category.category.aliases.join(", ") : "无"}</span>
         </div>
-        <div class="bg-slate-800/40 rounded-lg p-3 border border-slate-700/50">
-          <div class="text-xs text-slate-500 mb-1">命令数</div>
-          <span class="text-sm text-slate-200">{funcCount}</span>
+        <div class="bg-dst-elevated rounded-lg p-3 border border-dst-border">
+          <div class="text-xs text-dst-fg-muted mb-1">命令数</div>
+          <span class="text-sm text-dst-fg">{funcCount}</span>
         </div>
       </div>
 

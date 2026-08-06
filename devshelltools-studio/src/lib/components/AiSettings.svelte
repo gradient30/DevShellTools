@@ -268,51 +268,51 @@
 
 <div class="p-5 max-w-3xl mx-auto">
   <div class="flex items-center justify-between mb-4">
-    <h2 class="text-lg font-semibold text-cyan-300">AI 配置</h2>
-    <button class="px-3 py-1.5 text-sm bg-cyan-600 hover:bg-cyan-500 rounded" onclick={openAdd}>+ 添加配置</button>
+    <h2 class="text-lg font-semibold text-dst-accent">AI 配置</h2>
+    <button class="px-3 py-1.5 text-sm bg-dst-accent text-dst-accent-fg hover:bg-dst-accent-hover rounded" onclick={openAdd}>+ 添加配置</button>
   </div>
 
   {#if errMsg}
-    <div class="mb-3 p-2 text-xs bg-red-900/40 border border-red-700 text-red-200 rounded">{errMsg}</div>
+    <div class="mb-3 p-2 text-xs bg-dst-danger-bg border border-dst-danger-border text-dst-danger-fg rounded">{errMsg}</div>
   {/if}
   {#if successMsg}
-    <div class="mb-3 p-2 text-xs bg-green-900/40 border border-green-700 text-green-200 rounded">{successMsg}</div>
+    <div class="mb-3 p-2 text-xs bg-dst-success-bg border border-dst-success text-dst-success-fg rounded">{successMsg}</div>
   {/if}
 
   {#if loading}
     <div class="space-y-2">
-      <div class="h-10 bg-slate-800/60 rounded animate-pulse"></div>
-      <div class="h-10 bg-slate-800/60 rounded animate-pulse"></div>
+      <div class="h-10 bg-dst-elevated rounded animate-pulse"></div>
+      <div class="h-10 bg-dst-elevated rounded animate-pulse"></div>
     </div>
   {:else if profiles.length === 0}
-    <p class="text-sm text-slate-500">暂无配置，请点击「添加配置」。</p>
+    <p class="text-sm text-dst-fg-muted">暂无配置，请点击「添加配置」。</p>
   {:else}
     <ul class="space-y-2">
       {#each profiles as p (p.id)}
-        <li class="bg-slate-800/60 border border-slate-700 rounded p-3 flex items-center justify-between gap-3">
+        <li class="bg-dst-elevated border border-dst-border rounded p-3 flex items-center justify-between gap-3">
           <div>
-            <div class="text-sm text-slate-200 font-medium">
+            <div class="text-sm text-dst-fg font-medium">
               {p.name}
-              {#if defaultId === p.id}<span class="text-xs text-cyan-400 ml-2">默认</span>{/if}
+              {#if defaultId === p.id}<span class="text-xs text-dst-accent ml-2">默认</span>{/if}
             </div>
-            <div class="text-xs text-slate-400 mt-0.5">
+            <div class="text-xs text-dst-fg-muted mt-0.5">
               {p.protocol === "openai" ? "OpenAI 兼容" : "Anthropic"} · {p.model} · {p.key_configured ? "Key 已配置" : "Key 未配置"}
             </div>
           </div>
           <div class="flex gap-2 shrink-0">
             {#if defaultId !== p.id}
-              <button class="text-xs text-slate-400 hover:text-cyan-300" onclick={() => setDefault(p.id)}>设为默认</button>
+              <button class="text-xs text-dst-fg-muted hover:text-dst-accent" onclick={() => setDefault(p.id)}>设为默认</button>
             {/if}
-            <button class="text-xs text-emerald-400 hover:text-emerald-200" onclick={() => testProfile(p.id)} disabled={testingProfile === p.id}>
+            <button class="text-xs text-dst-success hover:text-dst-success-fg" onclick={() => testProfile(p.id)} disabled={testingProfile === p.id}>
               {testingProfile === p.id ? "测试中…" : "测试"}
             </button>
             {#if profileTestResult[p.id]}
-              <span class="text-xs {profileTestResult[p.id].ok ? 'text-green-400' : 'text-red-400'} ml-1 max-w-40 truncate" title={profileTestResult[p.id].msg}>
+              <span class="text-xs {profileTestResult[p.id].ok ? 'text-dst-success' : 'text-dst-danger'} ml-1 max-w-40 truncate" title={profileTestResult[p.id].msg}>
                 {profileTestResult[p.id].ok ? "✓" : "✗"} {profileTestResult[p.id].msg}
               </span>
             {/if}
-            <button class="text-xs text-cyan-400 hover:text-cyan-200" onclick={() => openEdit(p)}>编辑</button>
-            <button class="text-xs text-red-400 hover:text-red-300" onclick={() => remove(p.id)}>删除</button>
+            <button class="text-xs text-dst-accent hover:text-dst-accent" onclick={() => openEdit(p)}>编辑</button>
+            <button class="text-xs text-dst-danger hover:text-dst-danger" onclick={() => remove(p.id)}>删除</button>
           </div>
         </li>
       {/each}
@@ -322,17 +322,17 @@
 
 {#if showDialog && editing}
   <div class="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
-    <div class="bg-slate-900 border border-slate-700 rounded-lg w-full max-w-lg p-5 max-h-[90vh] overflow-y-auto">
-      <h3 class="text-base font-semibold text-cyan-300 mb-3">{editing.name ? "编辑配置" : "添加配置"}</h3>
+    <div class="bg-dst-surface border border-dst-border rounded-lg w-full max-w-lg p-5 max-h-[90vh] overflow-y-auto">
+      <h3 class="text-base font-semibold text-dst-accent mb-3">{editing.name ? "编辑配置" : "添加配置"}</h3>
       <div class="space-y-3">
         <label class="block">
-          <span class="text-xs text-slate-400">名称</span>
-          <input bind:value={editing.name} class="mt-1 w-full px-2 py-1.5 text-sm bg-slate-800 border border-slate-700 rounded" />
+          <span class="text-xs text-dst-fg-muted">名称</span>
+          <input bind:value={editing.name} class="mt-1 w-full px-2 py-1.5 text-sm bg-dst-elevated border border-dst-border rounded" />
         </label>
         <label class="block">
-          <span class="text-xs text-slate-400">提供商预设</span>
+          <span class="text-xs text-dst-fg-muted">提供商预设</span>
           <select
-            class="mt-1 w-full px-2 py-1.5 text-sm bg-slate-800 border border-slate-700 rounded"
+            class="mt-1 w-full px-2 py-1.5 text-sm bg-dst-elevated border border-dst-border rounded"
             value={selectedPresetId}
             onchange={(e) => applyPreset((e.currentTarget as HTMLSelectElement).value)}>
             <option value="custom">自定义</option>
@@ -342,9 +342,9 @@
           </select>
         </label>
         <label class="block">
-          <span class="text-xs text-slate-400">协议</span>
+          <span class="text-xs text-dst-fg-muted">协议</span>
           <select
-            class="mt-1 w-full px-2 py-1.5 text-sm bg-slate-800 border border-slate-700 rounded"
+            class="mt-1 w-full px-2 py-1.5 text-sm bg-dst-elevated border border-dst-border rounded"
             value={editing.protocol}
             onchange={(e) => onProtocolChange((e.currentTarget as HTMLSelectElement).value as AiProtocol)}>
             <option value="openai">OpenAI 兼容</option>
@@ -354,70 +354,70 @@
           </select>
         </label>
         <label class="block">
-          <span class="text-xs text-slate-400">Base URL</span>
-          <input bind:value={editing.base_url} class="mt-1 w-full px-2 py-1.5 text-sm bg-slate-800 border border-slate-700 rounded font-mono" />
+          <span class="text-xs text-dst-fg-muted">Base URL</span>
+          <input bind:value={editing.base_url} class="mt-1 w-full px-2 py-1.5 text-sm bg-dst-elevated border border-dst-border rounded font-mono" />
           {#if endpointNote}
-            <p class="text-xs text-amber-300/90 mt-1">{endpointNote}</p>
+            <p class="text-xs text-dst-warning-fg mt-1">{endpointNote}</p>
           {/if}
         </label>
         <div class="block">
           <div class="flex items-center justify-between">
-            <span class="text-xs text-slate-400">模型</span>
+            <span class="text-xs text-dst-fg-muted">模型</span>
             <button
               type="button"
-              class="text-xs text-cyan-400 hover:text-cyan-200 disabled:opacity-50"
+              class="text-xs text-dst-accent hover:text-dst-accent disabled:opacity-50"
               onclick={fetchModels}
               disabled={fetchingModels || (!editing.key_configured && !newKey.trim())}>
               {fetchingModels ? "拉取中…" : "拉取模型"}
             </button>
           </div>
-          <input bind:value={editing.model} class="mt-1 w-full px-2 py-1.5 text-sm bg-slate-800 border border-slate-700 rounded font-mono" />
+          <input bind:value={editing.model} class="mt-1 w-full px-2 py-1.5 text-sm bg-dst-elevated border border-dst-border rounded font-mono" />
           {#if showModelPicker && modelOptions.length > 0}
-            <div class="mt-2 border border-slate-700 rounded bg-slate-950/80 p-2">
+            <div class="mt-2 border border-dst-border rounded bg-dst-bg/80 p-2">
               <input
                 bind:value={modelSearch}
                 placeholder="搜索模型…"
-                class="w-full px-2 py-1 text-xs bg-slate-900 border border-slate-700 rounded mb-2" />
+                class="w-full px-2 py-1 text-xs bg-dst-surface border border-dst-border rounded mb-2" />
               <ul class="max-h-40 overflow-y-auto text-xs space-y-0.5">
                 {#each filteredModels as m (m)}
                   <li>
-                    <button type="button" class="w-full text-left px-2 py-1 rounded hover:bg-slate-800 font-mono text-slate-200" onclick={() => pickModel(m)}>
+                    <button type="button" class="w-full text-left px-2 py-1 rounded hover:bg-dst-elevated font-mono text-dst-fg" onclick={() => pickModel(m)}>
                       {m}
                     </button>
                   </li>
                 {/each}
                 {#if filteredModels.length === 0}
-                  <li class="text-slate-500 px-2 py-1">无匹配模型</li>
+                  <li class="text-dst-fg-muted px-2 py-1">无匹配模型</li>
                 {/if}
               </ul>
             </div>
           {/if}
         </div>
         <label class="block">
-          <span class="text-xs text-slate-400">max_tokens（输出上限；DeepSeek 建议 ≥16384，Studio 会自动关闭思考）</span>
+          <span class="text-xs text-dst-fg-muted">max_tokens（输出上限；DeepSeek 建议 ≥16384，Studio 会自动关闭思考）</span>
           <input
             type="number"
             min="256"
             max="65536"
             step="256"
             bind:value={editing.max_tokens}
-            class="mt-1 w-full px-2 py-1.5 text-sm bg-slate-800 border border-slate-700 rounded font-mono" />
+            class="mt-1 w-full px-2 py-1.5 text-sm bg-dst-elevated border border-dst-border rounded font-mono" />
         </label>
         <label class="block">
-          <span class="text-xs text-slate-400">API Key {editing.key_configured ? "(已配置，留空不修改)" : ""}</span>
-          <input type="password" bind:value={newKey} class="mt-1 w-full px-2 py-1.5 text-sm bg-slate-800 border border-slate-700 rounded font-mono" />
+          <span class="text-xs text-dst-fg-muted">API Key {editing.key_configured ? "(已配置，留空不修改)" : ""}</span>
+          <input type="password" bind:value={newKey} class="mt-1 w-full px-2 py-1.5 text-sm bg-dst-elevated border border-dst-border rounded font-mono" />
         </label>
         {#if testMsg}
-          <div class="p-2 text-xs rounded border {testOk ? 'border-green-700 bg-green-900/30 text-green-200' : 'border-red-700 bg-red-900/30 text-red-200'}">
+          <div class="p-2 text-xs rounded border {testOk ? 'border-dst-success bg-dst-success-bg text-dst-success-fg' : 'border-dst-danger-border bg-dst-danger-bg text-dst-danger-fg'}">
             {testOk ? "连接成功：" : "连接失败："}{testMsg}
           </div>
         {/if}
         <div class="flex gap-2 pt-2">
-          <button class="px-3 py-1.5 text-sm bg-slate-700 hover:bg-slate-600 rounded" onclick={testConnection} disabled={testing}>
+          <button class="px-3 py-1.5 text-sm bg-dst-muted hover:bg-dst-muted rounded" onclick={testConnection} disabled={testing}>
             {testing ? "测试中…" : "测试连接"}
           </button>
-          <button class="px-3 py-1.5 text-sm bg-cyan-600 hover:bg-cyan-500 rounded disabled:opacity-50" onclick={saveProfile} disabled={!testOk}>保存</button>
-          <button class="px-3 py-1.5 text-sm bg-slate-700 hover:bg-slate-600 rounded" onclick={() => (showDialog = false)}>取消</button>
+          <button class="px-3 py-1.5 text-sm bg-dst-accent text-dst-accent-fg hover:bg-dst-accent-hover rounded disabled:opacity-50" onclick={saveProfile} disabled={!testOk}>保存</button>
+          <button class="px-3 py-1.5 text-sm bg-dst-muted hover:bg-dst-muted rounded" onclick={() => (showDialog = false)}>取消</button>
         </div>
       </div>
     </div>

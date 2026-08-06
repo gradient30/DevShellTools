@@ -107,79 +107,79 @@
 
 <div class="p-5 max-w-3xl mx-auto space-y-6">
   <div class="flex items-center justify-between">
-    <h2 class="text-lg font-semibold text-cyan-300">工具箱</h2>
-    <button class="text-xs text-slate-400 hover:text-cyan-300" onclick={() => onRefresh()} disabled={busy}>刷新</button>
+    <h2 class="text-lg font-semibold text-dst-accent">工具箱</h2>
+    <button class="text-xs text-dst-fg-muted hover:text-dst-accent" onclick={() => onRefresh()} disabled={busy}>刷新</button>
   </div>
 
   {#if !loaded}
     <div class="space-y-3">
-      <div class="h-24 bg-slate-800/40 rounded animate-pulse"></div>
-      <div class="h-24 bg-slate-800/40 rounded animate-pulse"></div>
+      <div class="h-24 bg-dst-elevated rounded animate-pulse"></div>
+      <div class="h-24 bg-dst-elevated rounded animate-pulse"></div>
     </div>
   {:else}
     {#if msg}
-      <div class="p-2 text-xs bg-green-900/40 border border-green-700 text-green-200 rounded">{msg}</div>
+      <div class="p-2 text-xs bg-dst-success-bg border border-dst-success text-dst-success-fg rounded">{msg}</div>
     {/if}
     {#if errMsg}
-      <div class="p-2 text-xs bg-red-900/40 border border-red-700 text-red-200 rounded">{errMsg}</div>
+      <div class="p-2 text-xs bg-dst-danger-bg border border-dst-danger-border text-dst-danger-fg rounded">{errMsg}</div>
     {/if}
 
-    <section class="bg-slate-800/60 rounded-lg p-4 border border-slate-700">
-      <h3 class="text-sm font-semibold text-amber-300 mb-2">旧版迁移助手</h3>
-      <p class="text-xs text-slate-500 mb-3 leading-relaxed">
+    <section class="bg-dst-elevated rounded-lg p-4 border border-dst-border">
+      <h3 class="text-sm font-semibold text-dst-warning-fg mb-2">旧版迁移助手</h3>
+      <p class="text-xs text-dst-fg-muted mb-3 leading-relaxed">
         当前工作区为最新编辑副本。迁移会合并其它位置中较新的命令，同步模块目录，并归档旧沙箱；完成后不应再提示「旧版安装」。
       </p>
       {#if migration?.has_legacy}
-        <p class="text-xs text-slate-300 mb-2">仍需处理：</p>
-        <ul class="text-xs text-slate-400 mb-3 space-y-1.5">
+        <p class="text-xs text-dst-fg mb-2">仍需处理：</p>
+        <ul class="text-xs text-dst-fg-muted mb-3 space-y-1.5">
           {#each migration.legacy_dirs as d}
-            <li class="font-mono break-all leading-snug pl-2 border-l-2 border-amber-700/60">{d}</li>
+            <li class="font-mono break-all leading-snug pl-2 border-l-2 border-dst-warning">{d}</li>
           {/each}
         </ul>
         <button
-          class="px-3 py-1.5 text-sm bg-amber-600 hover:bg-amber-500 rounded disabled:opacity-50"
+          class="px-3 py-1.5 text-sm bg-dst-btn-warning text-dst-btn-warning-fg hover:opacity-90 rounded disabled:opacity-50"
           onclick={doMigrate}
           disabled={busy}>
           {busy ? "迁移中…" : "执行迁移并清理旧版"}
         </button>
       {:else}
-        <p class="text-xs text-emerald-400/90">未检测到待迁移的旧版内容，当前即为最新。</p>
+        <p class="text-xs text-dst-success/90">未检测到待迁移的旧版内容，当前即为最新。</p>
       {/if}
     </section>
 
-    <section class="bg-slate-800/60 rounded-lg p-4 border border-slate-700">
-      <h3 class="text-sm font-semibold text-cyan-300 mb-2">导出 / 导入</h3>
-      <p class="text-xs text-slate-400 mb-3">导出所有 Public/*.ps1 脚本到目录；从目录导入时逐个校验语法和安全，通过才写入。</p>
+    <section class="bg-dst-elevated rounded-lg p-4 border border-dst-border">
+      <h3 class="text-sm font-semibold text-dst-accent mb-2">导出 / 导入</h3>
+      <p class="text-xs text-dst-fg-muted mb-3">导出所有 Public/*.ps1 脚本到目录；从目录导入时逐个校验语法和安全，通过才写入。</p>
       <div class="flex gap-2">
-        <button class="px-3 py-1.5 text-sm bg-cyan-600 hover:bg-cyan-500 rounded disabled:opacity-50" onclick={doExport} disabled={busy}>导出工作区</button>
-        <button class="px-3 py-1.5 text-sm bg-slate-700 hover:bg-slate-600 rounded disabled:opacity-50" onclick={doImport} disabled={busy}>导入工作区</button>
+        <button class="px-3 py-1.5 text-sm bg-dst-accent text-dst-accent-fg hover:bg-dst-accent-hover rounded disabled:opacity-50" onclick={doExport} disabled={busy}>导出工作区</button>
+        <button class="px-3 py-1.5 text-sm bg-dst-muted hover:bg-dst-muted rounded disabled:opacity-50" onclick={doImport} disabled={busy}>导入工作区</button>
       </div>
     </section>
 
-    <section class="bg-slate-800/60 rounded-lg p-4 border border-slate-700">
+    <section class="bg-dst-elevated rounded-lg p-4 border border-dst-border">
       <h3 class="text-sm font-semibold text-emerald-300 mb-2">WebView2 Runtime</h3>
       {#if webview2?.installed}
-        <p class="text-xs text-green-300">已安装，版本 {webview2.version}</p>
+        <p class="text-xs text-dst-success">已安装，版本 {webview2.version}</p>
       {:else}
-        <p class="text-xs text-amber-300 mb-3">未检测到 WebView2 Runtime（Win10 需要安装）</p>
-        <button class="px-3 py-1.5 text-sm bg-emerald-600 hover:bg-emerald-500 rounded" onclick={openWebview2Download}>下载 Evergreen Runtime</button>
+        <p class="text-xs text-dst-warning-fg mb-3">未检测到 WebView2 Runtime（Win10 需要安装）</p>
+        <button class="px-3 py-1.5 text-sm bg-dst-btn-success text-dst-btn-success-fg hover:opacity-90 rounded" onclick={openWebview2Download}>下载 Evergreen Runtime</button>
       {/if}
     </section>
 
-    <section class="bg-slate-800/60 rounded-lg p-4 border border-slate-700">
-      <h3 class="text-sm font-semibold text-slate-300 mb-2">操作日志</h3>
+    <section class="bg-dst-elevated rounded-lg p-4 border border-dst-border">
+      <h3 class="text-sm font-semibold text-dst-fg mb-2">操作日志</h3>
       {#if logFiles.length === 0}
-        <p class="text-xs text-slate-500">暂无日志</p>
+        <p class="text-xs text-dst-fg-muted">暂无日志</p>
       {:else}
         <div class="flex gap-4">
-          <ul class="text-xs text-slate-400 w-40">
+          <ul class="text-xs text-dst-fg-muted w-40">
             {#each logFiles as f}
               <li>
-                <button class="w-full text-left hover:text-cyan-300 {currentLogName === f ? 'text-cyan-300' : ''}" onclick={() => selectLog(f)}>{f}</button>
+                <button class="w-full text-left hover:text-dst-accent {currentLogName === f ? 'text-dst-accent' : ''}" onclick={() => selectLog(f)}>{f}</button>
               </li>
             {/each}
           </ul>
-          <pre class="flex-1 text-xs font-mono bg-slate-950 border border-slate-700 rounded p-2 overflow-auto max-h-64 text-slate-300">{currentLog || "选择左侧日志文件查看"}</pre>
+          <pre class="flex-1 text-xs font-mono bg-dst-bg border border-dst-border rounded p-2 overflow-auto max-h-64 text-dst-fg">{currentLog || "选择左侧日志文件查看"}</pre>
         </div>
       {/if}
     </section>
