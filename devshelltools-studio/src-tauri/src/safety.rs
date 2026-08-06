@@ -10,6 +10,18 @@ pub struct SafetyReport {
 /// 静态扫描 PowerShell 代码是否违反安全边界。
 /// 规则与 README "安全边界" 一致，禁止危险命令。
 pub fn check(code: &str) -> DstResult<SafetyReport> {
+    check_with_options(code, false)
+}
+
+/// `danger_mode=true` 时跳过全部红线（仅 AI 会话 `/danger` 激活后的生成/插入路径）。
+pub fn check_with_options(code: &str, danger_mode: bool) -> DstResult<SafetyReport> {
+    if danger_mode {
+        return Ok(SafetyReport {
+            ok: true,
+            violations: vec![],
+        });
+    }
+
     let mut violations = vec![];
 
     // 规则1：禁止 git push --force / --force-with-lease
@@ -146,6 +158,13 @@ mod tests {
     fn hard_reset_blocked() {
         let r = check("git reset --hard HEAD~1").unwrap();
         assert!(!r.ok);
+    }
+
+    #[test]
+    fn danger_mode_allows_hard_reset() {
+        let r = check_with_options("git reset --hard origin/main", true).unwrap();
+        assert!(r.ok);
+        assert!(r.violations.is_empty());
     }
 
     #[test]

@@ -283,7 +283,15 @@ pub fn apply_code_to_category(
     file_name: &str,
     code: &str,
 ) -> DstResult<Vec<String>> {
-    let report = safety::check(code)?;
+    apply_code_to_category_with_options(file_name, code, false)
+}
+
+pub fn apply_code_to_category_with_options(
+    file_name: &str,
+    code: &str,
+    danger_mode: bool,
+) -> DstResult<Vec<String>> {
+    let report = safety::check_with_options(code, danger_mode)?;
     if !report.ok {
         return Err(DstError::SafetyBlocked(report.violations.join("; ")));
     }
@@ -355,7 +363,7 @@ $enc = New-Object System.Text.UTF8Encoding $true
     let _ = std::fs::remove_file(&tmp);
 
     let content = workspace::read_file(&rel)?;
-    assert_safety_ok(safety::check(&content)?)?;
+    assert_safety_ok(safety::check_with_options(&content, danger_mode)?)?;
     let file_parsed = ps_parser::parse_ps1(&content)?;
     sync::regenerate_with_parsed(file_name, Some(file_parsed))?;
     workspace::touch_last_sync()?;

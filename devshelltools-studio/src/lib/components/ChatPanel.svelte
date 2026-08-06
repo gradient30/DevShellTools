@@ -13,7 +13,7 @@
     categories: CategoryInfo[];
     initialPrompt: string;
     autoSendToken?: number;
-    onApplyCode: (code: string, fileName: string) => Promise<void>;
+    onApplyCode: (code: string, fileName: string, dangerMode?: boolean) => Promise<void>;
     onOpenSettings: () => void;
   } = $props();
 
@@ -26,6 +26,8 @@
   let input = $state("");
   let loading = $state(false);
   let errMsg = $state<string | null>(null);
+  /** 本会话最高权限：输入 /danger 开启，/safe 关闭 */
+  let dangerMode = $state(false);
   let applying = $state(false);
   let replyCodeBlocks = $state<Record<number, ValidatedCodeBlock[]>>({});
   let targetFiles = $state<Record<string, string>>({});
@@ -112,9 +114,46 @@
     void sendPrompt(prompt, { replaceAll: true });
   });
 
+  function handleSessionCommand(raw: string): boolean {
+    const cmd = raw.trim().toLowerCase();
+    if (cmd === "/danger") {
+      dangerMode = true;
+      input = "";
+      messages = [
+        ...messages,
+        { id: newId("user"), role: "user", content: "/danger" },
+        {
+          id: newId("assistant"),
+          role: "assistant",
+          content:
+            "【危险模式已开启】本会话可生成/插入含 git reset --hard、force-push、真实 git clean 等破坏性命令。输入 /safe 可恢复默认红线。"
+        }
+      ];
+      showToast("危险模式已开启", "info", 3500);
+      return true;
+    }
+    if (cmd === "/safe") {
+      dangerMode = false;
+      input = "";
+      messages = [
+        ...messages,
+        { id: newId("user"), role: "user", content: "/safe" },
+        {
+          id: newId("assistant"),
+          role: "assistant",
+          content: "已关闭危险模式，恢复默认安全红线。"
+        }
+      ];
+      showToast("已恢复安全模式", "success", 2500);
+      return true;
+    }
+    return false;
+  }
+
   async function sendPrompt(text: string, opts?: { replaceAll?: boolean }) {
     const trimmed = text.trim();
     if (!trimmed || loading || !profileId) return;
+    if (!opts?.replaceAll && handleSessionCommand(trimmed)) return;
 
     if (opts?.replaceAll) {
       messages = [{ id: newId("user"), role: "user", content: trimmed }];
@@ -131,7 +170,7 @@
 
     const apiMessages = toApiMessages(messages);
     try {
-      const result = await api.aiChatWithValidation(apiMessages, profileId);
+      const result = await api.aiChatWithValidation(apiMessages, profileId, dangerMode);
       const assistantIdx = messages.length;
       messages = [
         ...messages,
@@ -281,9 +320,15 @@
       errMsg = "请选择目标分类";
       return;
     }
+    if (dangerMode) {
+      const ok = confirm(
+        "当前为危险模式，即将插入可能含破坏性操作的代码。确认继续？"
+      );
+      if (!ok) return;
+    }
     applying = true;
     try {
-      await onApplyCode(block.code, fileName);
+      await onApplyCode(block.code, fileName, dangerMode);
     } catch (e) {
       errMsg = String(e);
     } finally {
@@ -405,6 +450,21 @@
     </button>
   </div>
 
+  {#if dangerMode}
+    <div class="px-4 py-2 bg-red-950/80 border-b border-red-600 text-red-100 text-xs flex items-center justify-between gap-2">
+      <span>⚠ 危险模式：本会话已放宽安全红线（reset --hard / force-push / 真实 clean 等）</span>
+      <button
+        type="button"
+        class="shrink-0 px-2 py-0.5 rounded border border-red-500/60 hover:bg-red-900/50"
+        onclick={() => {
+          dangerMode = false;
+          showToast("已恢复安全模式", "success", 2000);
+        }}>
+        /safe
+      </button>
+    </div>
+  {/if}
+
   {#if errMsg}
     <div class="px-4 py-2 bg-red-900/40 border-b border-red-700 text-red-200 text-xs flex justify-between gap-2">
       <span class="break-words min-w-0">{errMsg}</span>
@@ -418,6 +478,7 @@
         <div class="text-4xl">🤖</div>
         <p class="text-sm text-slate-400">可直接提问，或从命令列表点「AI审阅」</p>
         <p class="text-xs text-slate-600">审阅流程：检查问题 → 优化建议 → 可新增命令建议；校验通过后可插入分类</p>
+        <p class="text-xs text-slate-600">需要破坏性 git 能力时输入 <code class="text-amber-400/90">/danger</code>，用 <code class="text-slate-400">/safe</code> 关闭</p>
       </div>
     {/if}
 
@@ -617,10 +678,16 @@
             void send();
           }
         }}
-        placeholder={rewindBackup ? "回退后可修改，然后发送…" : "继续追问…（Shift+Enter 换行）"}
+        placeholder={rewindBackup
+          ? "回退后可修改，然后发送…"
+          : dangerMode
+            ? "危险模式已开…（/safe 关闭）"
+            : "继续追问…（/danger 放宽红线 · Shift+Enter 换行）"}
         class="flex-1 px-3 py-2 text-sm bg-slate-800 border rounded-lg text-slate-200 focus:outline-none resize-y min-h-[2.5rem] max-h-48 {rewindBackup
           ? 'border-amber-600/70 focus:border-amber-500'
-          : 'border-slate-700 focus:border-cyan-600'}"
+          : dangerMode
+            ? 'border-red-600/70 focus:border-red-500'
+            : 'border-slate-700 focus:border-cyan-600'}"
         disabled={loading || !profileId || editingId !== null}></textarea>
       {#if loading}
         <button

@@ -333,8 +333,33 @@ pub struct ChatMessage {
     pub content: String,
 }
 
-/// 固化的 System Prompt（安全边界，用户不可改）
+/// 固化的 System Prompt。`danger_mode` 由 AI 会话 `/danger` 激活。
 pub fn system_prompt() -> String {
+    system_prompt_with_options(false)
+}
+
+pub fn system_prompt_with_options(danger_mode: bool) -> String {
+    if danger_mode {
+        return r#"你是 DevShellTools Studio 的 PowerShell 命令生成助手。【危险模式已激活】用户已通过 /danger 授权本会话最高权限。
+
+本会话允许生成默认红线内的破坏性操作（须在说明中醒目标注风险）：
+- git push --force / --force-with-lease
+- git reset --hard
+- git clean -fd / -f（真实删除）
+- 其它高风险 git/文件操作（仍应尽量加确认参数或明确警告）
+
+仍须遵守：
+1. 每个函数必须包含 .SYNOPSIS 和至少一个 .EXAMPLE
+2. 函数名首字母小写为公共导出命令，首字母大写为内部辅助
+3. 在回复开头用一行简短警告：已处于危险模式，操作可能不可逆
+
+输出格式：
+- PowerShell 代码放在 ```powershell 代码块中
+- 代码块外可加简短说明
+"#
+        .to_string();
+    }
+
     r#"你是 DevShellTools Studio 的 PowerShell 命令生成助手。你的任务是根据用户需求生成 PowerShell 5.1 兼容的快捷命令函数。
 
 严格规则（违反则拒绝生成）：
@@ -346,6 +371,7 @@ pub fn system_prompt() -> String {
 6. 禁止 Remove-Item -Recurse -Force（危险删除）
 7. 每个函数必须包含 .SYNOPSIS 和至少一个 .EXAMPLE 注释型帮助
 8. 函数名首字母小写为公共导出命令，首字母大写（如 Assert-Xxx）为内部辅助函数
+9. 若用户需要上述破坏性能力，提示其在本会话输入 /danger 激活危险模式（输入 /safe 可关闭）
 
 输出格式：
 - 把生成的 PowerShell 代码放在 ```powershell 代码块中
@@ -376,7 +402,8 @@ dps
     & docker ps
 }
 ```
-"#.to_string()
+"#
+    .to_string()
 }
 
 /// 从 AI 响应文本中提取 ```powershell 代码块
@@ -446,5 +473,14 @@ mod tests {
         assert!(p.contains("--force"));
         assert!(p.contains("--hard"));
         assert!(p.contains(".SYNOPSIS"));
+        assert!(p.contains("/danger"));
+    }
+
+    #[test]
+    fn danger_system_prompt_allows_hard_reset() {
+        let p = system_prompt_with_options(true);
+        assert!(p.contains("危险模式"));
+        assert!(p.contains("reset --hard"));
+        assert!(!p.contains("违反则拒绝生成"));
     }
 }

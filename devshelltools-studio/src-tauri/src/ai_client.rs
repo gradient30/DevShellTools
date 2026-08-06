@@ -45,11 +45,19 @@ pub async fn chat_stream(
     api_key: &str,
     messages: Vec<ChatMessage>,
 ) -> DstResult<Vec<StreamEvent>> {
+    chat_stream_with_options(config, api_key, messages, false).await
+}
+
+pub async fn chat_stream_with_options(
+    config: &AiConfig,
+    api_key: &str,
+    messages: Vec<ChatMessage>,
+    danger_mode: bool,
+) -> DstResult<Vec<StreamEvent>> {
     reset_chat_cancel();
-    // 注入 system prompt 作为首条消息
     let mut full_messages = vec![ChatMessage {
         role: "system".into(),
-        content: ai_config::system_prompt(),
+        content: ai_config::system_prompt_with_options(danger_mode),
     }];
     full_messages.extend(messages);
 

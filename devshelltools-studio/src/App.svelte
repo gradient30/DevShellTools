@@ -257,15 +257,24 @@
     }
   }
 
-  async function handleApplyCode(code: string, fileName: string) {
+  async function handleApplyCode(code: string, fileName: string, dangerMode = false) {
     try {
-      const names = await api.applyAiCode(fileName, code, `AI 插入到 ${fileName}`);
+      const names = await api.applyAiCode(
+        fileName,
+        code,
+        `AI 插入到 ${fileName}`,
+        dangerMode
+      );
       selectedFileName = fileName;
       tab = "manage";
       await loadCategories();
       void loadManageSidebar();
       void loadInstallStatus();
-      showToast(`已插入 ${names.join(", ")}`, "success", 3500);
+      showToast(
+        dangerMode ? `已插入 ${names.join(", ")}（危险模式）` : `已插入 ${names.join(", ")}`,
+        dangerMode ? "info" : "success",
+        3500
+      );
     } catch (e) {
       errorMsg.set(String(e));
     }

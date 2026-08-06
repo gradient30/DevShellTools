@@ -100,7 +100,7 @@ cargo test --offline --test m6_acceptance -- --test-threads=1
 
 ## 安全边界（必须遵守）
 
-模块的设计红线，新增快捷命令时不得违反（`safety.rs` 对 Studio 写入的代码强制执行同样的规则）：
+模块的设计红线，新增快捷命令时默认不得违反（`safety.rs` 对 Studio 写入的代码强制执行同样的规则）：
 
 - 不提供 `git push --force` / `git reset --hard` / `git clean -f`（真实删除）的快捷命令；`gclean` 只允许 `-nd`/`-ndx` dry-run。
 - `lpr` 只修改当前进程的代理环境变量，禁止写 `User` 级环境变量（`SetEnvironmentVariable(..., "User")`）。
@@ -108,6 +108,8 @@ cargo test --offline --test m6_acceptance -- --test-threads=1
 - `super` 只能打开新的管理员窗口，不得悄悄提升当前窗口；`psb` 只改当前进程执行策略。
 - 禁止 `Remove-Item -Recurse -Force` 式的危险删除（`uninstall.ps1` 等明确卸载场景除外；Studio 工作区含 `.studio` 时软卸载不得删除该目录）。
 - `install.ps1` / `uninstall.ps1` 只动当前用户的模块目录与 Profile，不需要管理员权限；安装前会对**非同源**旧目标目录做带时间戳的备份。
+
+**会话例外（Studio AI 助手）**：用户在 AI 对话中输入 `/danger` 可激活**本会话**最高权限（跳过 system prompt 与 AI 代码块的 `safety` 红线校验，插入前二次确认）；输入 `/safe` 或点横幅关闭可恢复默认红线（助手页用 CSS 保活，切 tab 不清危险模式）。管理页手写保存分类等路径始终走默认红线，不受 `/danger` 影响。
 
 ## 部署 / 发布
 

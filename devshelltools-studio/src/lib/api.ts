@@ -204,8 +204,13 @@ export const api = {
     invoke<void>("delete_function", { fileName, funcName, message }),
   testFunction: (fileName: string, funcName: string) =>
     invoke<FunctionTestResult>("test_function", { fileName, funcName }),
-  applyAiCode: (fileName: string, code: string, message: string) =>
-    invoke<string[]>("apply_ai_code", { fileName, code, message }),
+  applyAiCode: (fileName: string, code: string, message: string, dangerMode = false) =>
+    invoke<string[]>("apply_ai_code", {
+      fileName,
+      code,
+      message,
+      dangerMode
+    }),
   installStatus: () => invoke<InstallStatus>("install_status"),
   installModule: () => invoke<InstallResult>("install_module"),
   uninstallModule: () => invoke<InstallResult>("uninstall_module"),
@@ -236,14 +241,23 @@ export const api = {
     invoke<string[]>("fetch_ai_models_preview", {
       input: { protocol, base_url: baseUrl, key }
     }),
-  aiChat: (messages: ChatMessage[], profileId?: string) =>
-    invoke<string>("ai_chat", { messages, profileId: profileId ?? null }),
+  aiChat: (messages: ChatMessage[], profileId?: string, dangerMode = false) =>
+    invoke<string>("ai_chat", {
+      messages,
+      profileId: profileId ?? null,
+      dangerMode
+    }),
   /** 中断进行中的 AI 请求 */
   aiCancelChat: () => invoke<void>("ai_cancel_chat"),
-  aiChatWithValidation: (messages: ChatMessage[], profileId?: string) =>
+  aiChatWithValidation: (
+    messages: ChatMessage[],
+    profileId?: string,
+    dangerMode = false
+  ) =>
     invoke<AiChatResult>("ai_chat_with_validation", {
       messages,
-      profileId: profileId ?? null
+      profileId: profileId ?? null,
+      dangerMode
     }),
   checkMigration: () => invoke<MigrationCheck>("check_migration"),
   migrateLegacy: () => invoke<MigrateResult>("migrate_legacy"),

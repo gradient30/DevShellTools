@@ -182,8 +182,17 @@ pub async fn test_function(file_name: String, func_name: String) -> DstResult<Fu
 }
 
 #[tauri::command]
-pub async fn apply_ai_code(file_name: String, code: String, _message: String) -> DstResult<Vec<String>> {
-    run_blocking(move || function_edit::apply_code_to_category(&file_name, &code)).await
+pub async fn apply_ai_code(
+    file_name: String,
+    code: String,
+    _message: String,
+    danger_mode: Option<bool>,
+) -> DstResult<Vec<String>> {
+    let danger = danger_mode.unwrap_or(false);
+    run_blocking(move || {
+        function_edit::apply_code_to_category_with_options(&file_name, &code, danger)
+    })
+    .await
 }
 
 // ============ 安装 / 卸载 ============
@@ -319,12 +328,24 @@ pub async fn fetch_ai_models_preview(input: FetchModelsInput) -> DstResult<Vec<S
 
 // ============ AI 对话 ============
 
-async fn ai_chat_inner(messages: Vec<ChatMessage>, profile_id: Option<String>) -> DstResult<String> {
+async fn ai_chat_inner(
+    messages: Vec<ChatMessage>,
+    profile_id: Option<String>,
+    danger_mode: bool,
+) -> DstResult<String> {
     let config = ai_config::load_config_for_profile(profile_id.as_deref())?;
-    let id = profile_id.or_else(|| ai_config::load_profiles_store().ok()?.default_profile_id).ok_or_else(|| DstError::Other("未选择 AI Profile".into()))?;
+    let id = profile_id
+        .clone()
+        .or_else(|| ai_config::load_profiles_store().ok()?.default_profile_id)
+        .ok_or_else(|| DstError::Other("未选择 AI Profile".into()))?;
     let api_key = ai_config::load_key_for_profile(&id)?;
-    let events = ai_client::chat_stream(&config, &api_key, messages).await?;
-    let full: String = events.iter().filter(|e| e.kind == "delta").map(|e| e.content.as_str()).collect();
+    let events =
+        ai_client::chat_stream_with_options(&config, &api_key, messages, danger_mode).await?;
+    let full: String = events
+        .iter()
+        .filter(|e| e.kind == "delta")
+        .map(|e| e.content.as_str())
+        .collect();
     if full.trim().is_empty() {
         return Err(DstError::Other(
             "模型返回空正文。若使用 DeepSeek 思考模式，请增大 max_tokens（≥8192）或关闭思考。".into(),
@@ -334,8 +355,12 @@ async fn ai_chat_inner(messages: Vec<ChatMessage>, profile_id: Option<String>) -
 }
 
 #[tauri::command]
-pub async fn ai_chat(messages: Vec<ChatMessage>, profile_id: Option<String>) -> DstResult<String> {
-    ai_chat_inner(messages, profile_id).await
+pub async fn ai_chat(
+    messages: Vec<ChatMessage>,
+    profile_id: Option<String>,
+    danger_mode: Option<bool>,
+) -> DstResult<String> {
+    ai_chat_inner(messages, profile_id, danger_mode.unwrap_or(false)).await
 }
 
 /// 停止当前进行中的 AI 流式请求（前端「停止」按钮）。
@@ -345,8 +370,13 @@ pub fn ai_cancel_chat() {
 }
 
 #[tauri::command]
-pub async fn ai_chat_with_validation(messages: Vec<ChatMessage>, profile_id: Option<String>) -> DstResult<AiChatResult> {
-    let reply = ai_chat_inner(messages, profile_id).await?;
+pub async fn ai_chat_with_validation(
+    messages: Vec<ChatMessage>,
+    profile_id: Option<String>,
+    danger_mode: Option<bool>,
+) -> DstResult<AiChatResult> {
+    let danger = danger_mode.unwrap_or(false);
+    let reply = ai_chat_inner(messages, profile_id, danger).await?;
     let code_blocks = ai_config::extract_code_blocks(&reply);
     run_blocking(move || {
         let mut validated = vec![];
@@ -361,10 +391,12 @@ pub async fn ai_chat_with_validation(messages: Vec<ChatMessage>, profile_id: Opt
                 Ok(p) => (false, p.parse_errors.join("; "), vec![], None),
                 Err(e) => (false, e.to_string(), vec![], None),
             };
-            let safety_report = safety::check(code).unwrap_or(safety::SafetyReport {
-                ok: false,
-                violations: vec!["安全检查内部错误".into()],
-            });
+            let safety_report = safety::check_with_options(code, danger).unwrap_or(
+                safety::SafetyReport {
+                    ok: false,
+                    violations: vec!["安全检查内部错误".into()],
+                },
+            );
             validated.push(ValidatedCodeBlock {
                 code: code.clone(),
                 syntax_ok,
