@@ -160,13 +160,25 @@ pub async fn sync_public(_message: String) -> DstResult<()> {
 
 #[tauri::command]
 pub async fn upsert_function(
-    file_name: String, name: String, synopsis: String, example: String,
-    body: Option<String>, _message: String,
+    file_name: String,
+    name: String,
+    synopsis: String,
+    example: String,
+    body: Option<String>,
+    param_defaults: Option<std::collections::HashMap<String, String>>,
+    _message: String,
 ) -> DstResult<()> {
     run_blocking(move || {
         function_edit::upsert_function(
             &file_name,
-            FunctionDraft { name, synopsis, example, body },
+            FunctionDraft {
+                name,
+                synopsis,
+                example,
+                body,
+                param_defaults,
+                extra_examples: vec![],
+            },
         )
     })
     .await

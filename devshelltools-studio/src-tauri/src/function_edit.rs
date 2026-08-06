@@ -10,6 +10,12 @@ pub struct FunctionDraft {
     pub synopsis: String,
     pub example: String,
     pub body: Option<String>,
+    /// 参数名 → 新默认值源码（如 "10"）；仅更新已有默认值的参数
+    #[serde(default)]
+    pub param_defaults: Option<std::collections::HashMap<String, String>>,
+    /// 除首条外的 .EXAMPLE（编辑时从原帮助保留，避免静默丢失）
+    #[serde(default)]
+    pub extra_examples: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -56,26 +62,109 @@ fn default_body(name: &str) -> String {
     )
 }
 
+/// 提取函数体开头 `<# ... #>` 注释帮助的内部文本（不含定界符）。
+pub fn extract_leading_help_inner(body: &str) -> Option<String> {
+    let bytes = body.as_bytes();
+    let mut i = 0;
+    while i < bytes.len()
+        && (bytes[i] == b' ' || bytes[i] == b'\t' || bytes[i] == b'\r' || bytes[i] == b'\n')
+    {
+        i += 1;
+    }
+    if i + 2 > bytes.len() || &bytes[i..i + 2] != b"<#" {
+        return None;
+    }
+    let rel = body[i..].find("#>")?;
+    let inner = &body[i + 2..i + rel];
+    Some(inner.to_string())
+}
+
+/// 去掉函数体开头的注释帮助块，避免 upsert 时重复包裹 `<# ... #>`。
+pub fn strip_leading_comment_help(body: &str) -> String {
+    let bytes = body.as_bytes();
+    let mut i = 0;
+    while i < bytes.len()
+        && (bytes[i] == b' ' || bytes[i] == b'\t' || bytes[i] == b'\r' || bytes[i] == b'\n')
+    {
+        i += 1;
+    }
+    if i + 2 <= bytes.len() && &bytes[i..i + 2] == b"<#" {
+        if let Some(rel) = body[i..].find("#>") {
+            let after = i + rel + 2;
+            let rest = body[after..].trim_start_matches(['\r', '\n']);
+            return rest.to_string();
+        }
+    }
+    body.to_string()
+}
+
+/// 从注释帮助中按 `.EXAMPLE` 分段提取示例首行（与 ps_parser 一致）。
+pub fn examples_from_help_inner(help_inner: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut current: Option<String> = None;
+    for line in help_inner.lines() {
+        let t = line.trim();
+        if t.eq_ignore_ascii_case(".EXAMPLE") {
+            if let Some(ex) = current.take() {
+                if !ex.is_empty() {
+                    out.push(ex);
+                }
+            }
+            current = Some(String::new());
+            continue;
+        }
+        if let Some(ref mut buf) = current {
+            if buf.is_empty() {
+                if !t.is_empty()
+                    && !t.starts_with('.')
+                {
+                    *buf = t.to_string();
+                }
+            }
+        }
+    }
+    if let Some(ex) = current {
+        if !ex.is_empty() {
+            out.push(ex);
+        }
+    }
+    out
+}
+
+fn format_example_help_lines(first: &str, extras: &[String]) -> String {
+    let mut s = format!(".EXAMPLE\n{}", first.trim());
+    for ex in extras {
+        let t = ex.trim();
+        if t.is_empty() {
+            continue;
+        }
+        s.push_str(&format!("\n.EXAMPLE\n{t}"));
+    }
+    s
+}
+
 /// 生成完整函数块文本。
 pub fn build_function_block(draft: &FunctionDraft) -> String {
-    let body = draft
+    let raw_body = draft
         .body
         .clone()
         .unwrap_or_else(|| default_body(&draft.name));
+    let body = strip_leading_comment_help(&raw_body);
+    let example = draft.example.trim();
+    let example_help = format_example_help_lines(example, &draft.extra_examples);
     format!(
         r#"function {name} {{
 <#
 .SYNOPSIS
 {synopsis}
-.EXAMPLE
-{example}
+{example_help}
 #>
 {body}
 }}
 "#,
         name = draft.name,
         synopsis = draft.synopsis,
-        example = draft.example,
+        example_help = example_help,
         body = body.trim_end()
     )
 }
@@ -102,6 +191,78 @@ fn validate_public_fn_name(name: &str) -> DstResult<()> {
         return Err(DstError::Other("函数名仅允许小写字母与数字".into()));
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        build_function_block, examples_from_help_inner, extract_leading_help_inner,
+        patch_param_default, strip_leading_comment_help, FunctionDraft,
+    };
+
+    #[test]
+    fn patch_int_default() {
+        let body = r#"    param(
+        [int]$Count = 20
+    )
+    Assert-Git"#;
+        let out = patch_param_default(body, "Count", "10");
+        assert!(out.contains("$Count = 10"), "{out}");
+        assert!(!out.contains("$Count = 20"));
+    }
+
+    #[test]
+    fn strip_help_keeps_param() {
+        let body = r#"<#
+.SYNOPSIS
+显示历史
+.EXAMPLE
+gg
+#>
+    [CmdletBinding()]
+    param(
+        [int]$Count = 20
+    )
+    Assert-Git"#;
+        let out = strip_leading_comment_help(body);
+        assert!(!out.contains(".SYNOPSIS"), "{out}");
+        assert!(out.contains("$Count = 20"), "{out}");
+    }
+
+    #[test]
+    fn examples_from_help_keeps_all() {
+        let help = r#"
+.SYNOPSIS
+显示历史
+.EXAMPLE
+gg
+.EXAMPLE
+gg 5
+"#;
+        let ex = examples_from_help_inner(help);
+        assert_eq!(ex, vec!["gg".to_string(), "gg 5".to_string()]);
+    }
+
+    #[test]
+    fn build_preserves_extra_examples() {
+        let draft = FunctionDraft {
+            name: "gg".into(),
+            synopsis: "显示历史".into(),
+            example: "gg".into(),
+            body: Some(
+                r#"    [CmdletBinding()]
+    param([int]$Count = 10)
+    Assert-Git"#
+                    .into(),
+            ),
+            param_defaults: None,
+            extra_examples: vec!["gg 5".into()],
+        };
+        let block = build_function_block(&draft);
+        assert!(block.contains(".EXAMPLE\ngg\n.EXAMPLE\ngg 5"), "{block}");
+        assert!(block.contains("$Count = 10"), "{block}");
+        assert!(extract_leading_help_inner(&format!("<#\n.SYNOPSIS\nx\n#>\nbody")).is_some());
+    }
 }
 
 fn category_rel(file_name: &str) -> DstResult<String> {
@@ -137,16 +298,117 @@ fn write_temp_ps1(content: &str) -> DstResult<std::path::PathBuf> {
     Ok(tmp)
 }
 
+/// 从现有函数提取函数体（ScriptBlock 内部，不含外层 function 包装）。
+fn extract_existing_body(file_path: &std::path::Path, fn_name: &str) -> DstResult<Option<String>> {
+    let path_escaped = file_path.to_string_lossy().replace('\'', "''");
+    let name_escaped = fn_name.replace('\'', "''");
+    let script = format!(
+        r#"$ErrorActionPreference = 'Stop'
+$raw = Get-Content -LiteralPath '{path_escaped}' -Raw -Encoding UTF8
+$errors = $null; $tokens = $null
+$ast = [System.Management.Automation.Language.Parser]::ParseInput($raw, [ref]$tokens, [ref]$errors)
+$fnAsts = $ast.FindAll({{ param($n,$d) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq '{name_escaped}' }}, $true)
+if (-not $fnAsts -or $fnAsts.Count -eq 0) {{ '' ; exit 0 }}
+$inner = $fnAsts[0].Body.Extent.Text.Trim()
+if ($inner.StartsWith('{{') -and $inner.EndsWith('}}')) {{
+    $inner = $inner.Substring(1, $inner.Length - 2).TrimEnd()
+    if ($inner.StartsWith("`r`n")) {{ $inner = $inner.Substring(2) }}
+    elseif ($inner.StartsWith("`n")) {{ $inner = $inner.Substring(1) }}
+}}
+$inner
+"#
+    );
+    let out = run_ps_script(&script)?;
+    let body = out.trim_end().to_string();
+    if body.is_empty() {
+        Ok(None)
+    } else {
+        Ok(Some(body))
+    }
+}
+
+/// 替换函数体中 `$Name = <旧值>` 的默认值（仅首处匹配）。
+pub fn patch_param_default(body: &str, name: &str, new_val: &str) -> String {
+    let marker = format!("${name}");
+    let bytes = body.as_bytes();
+    let marker_bytes = marker.as_bytes();
+    let mut i = 0;
+    while i + marker_bytes.len() <= bytes.len() {
+        if &bytes[i..i + marker_bytes.len()] == marker_bytes {
+            let after_name = i + marker_bytes.len();
+            let mut j = after_name;
+            while j < bytes.len() && (bytes[j] == b' ' || bytes[j] == b'\t') {
+                j += 1;
+            }
+            if j < bytes.len() && bytes[j] == b'=' {
+                j += 1;
+                while j < bytes.len() && (bytes[j] == b' ' || bytes[j] == b'\t') {
+                    j += 1;
+                }
+                let val_start = j;
+                while j < bytes.len() {
+                    let c = bytes[j];
+                    if c == b',' || c == b')' || c == b'\r' || c == b'\n' {
+                        break;
+                    }
+                    j += 1;
+                }
+                if val_start < j {
+                    let mut out = String::with_capacity(body.len());
+                    out.push_str(&body[..val_start]);
+                    out.push_str(new_val.trim());
+                    out.push_str(&body[j..]);
+                    return out;
+                }
+            }
+        }
+        i += 1;
+    }
+    body.to_string()
+}
+
 /// 插入或更新分类文件中的函数，并重生成公共部分。
 pub fn upsert_function(
     file_name: &str,
-    draft: FunctionDraft,
+    mut draft: FunctionDraft,
 ) -> DstResult<()> {
     let rel = category_rel(file_name)?;
     validate_public_fn_name(&draft.name)?;
     let file_path = workspace::workspace_root().join(&rel);
     if !file_path.exists() {
         return Err(DstError::FileNotFound(rel));
+    }
+
+    // 编辑已有命令且未显式传 body：保留原函数体 / 额外 EXAMPLE，并应用参数默认值补丁
+    if draft.body.is_none() {
+        if let Some(mut body) = extract_existing_body(&file_path, &draft.name)? {
+            if draft.extra_examples.is_empty() {
+                if let Some(help) = extract_leading_help_inner(&body) {
+                    let all = examples_from_help_inner(&help);
+                    if all.len() > 1 {
+                        draft.extra_examples = all.into_iter().skip(1).collect();
+                    }
+                }
+            }
+            if let Some(defaults) = draft.param_defaults.take() {
+                for (pname, pval) in defaults {
+                    if pval.trim().is_empty() {
+                        continue;
+                    }
+                    body = patch_param_default(&body, &pname, &pval);
+                }
+            }
+            draft.body = Some(body);
+        }
+    } else if let Some(defaults) = draft.param_defaults.take() {
+        if let Some(body) = draft.body.as_mut() {
+            for (pname, pval) in defaults {
+                if pval.trim().is_empty() {
+                    continue;
+                }
+                *body = patch_param_default(body, &pname, &pval);
+            }
+        }
     }
 
     let block = build_function_block(&draft);

@@ -23,6 +23,8 @@ src-tauri/gen/schemas/
 devshelltools-studio/src-tauri/gen/schemas/
 src-tauri/WixTools/
 devshelltools-studio/src-tauri/WixTools/
+# PowerShell 模块分析缓存（勿入库）
+devshelltools-studio/src-tauri/Microsoft/
 
 # Studio runtime (工作区元数据，不入库)
 .studio/

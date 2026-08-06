@@ -251,3 +251,71 @@ textarea::placeholder {
   color: var(--dst-accent-fg);
   font-weight: 600;
 }
+
+/* AI 回复 Markdown 可读排版（用主题 token，保证对比度） */
+.dst-md {
+  color: inherit;
+  line-height: 1.55;
+  font-size: 0.875rem;
+}
+.dst-md p {
+  margin: 0 0 0.65em;
+}
+.dst-md p:last-child {
+  margin-bottom: 0;
+}
+.dst-md h2,
+.dst-md h3,
+.dst-md h4,
+.dst-md h5 {
+  margin: 0.85em 0 0.4em;
+  font-weight: 650;
+  line-height: 1.35;
+  color: var(--dst-fg);
+}
+.dst-md h2 {
+  font-size: 1.05em;
+}
+.dst-md h3 {
+  font-size: 1em;
+}
+.dst-md h4,
+.dst-md h5 {
+  font-size: 0.95em;
+}
+.dst-md ul,
+.dst-md ol {
+  margin: 0.4em 0 0.7em;
+  padding-left: 1.35em;
+}
+.dst-md li {
+  margin: 0.2em 0;
+}
+.dst-md strong {
+  font-weight: 650;
+  color: var(--dst-fg);
+}
+.dst-md em {
+  font-style: italic;
+}
+.dst-md code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.9em;
+  padding: 0.1em 0.35em;
+  border-radius: 0.25rem;
+  background: var(--dst-code);
+  color: var(--dst-accent);
+}
+.dst-md hr {
+  border: none;
+  border-top: 1px solid var(--dst-border);
+  margin: 0.75em 0;
+}
+.dst-md blockquote {
+  margin: 0.5em 0;
+  padding: 0.35em 0.75em;
+  border-left: 3px solid var(--dst-accent);
+  color: var(--dst-fg-muted);
+  background: var(--dst-elevated);
+  border-radius: 0 0.35rem 0.35rem 0;
+}

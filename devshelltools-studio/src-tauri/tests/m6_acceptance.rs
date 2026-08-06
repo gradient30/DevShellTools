@@ -23,6 +23,8 @@ mod tests {
             synopsis: "M6 测试命令".into(),
             example: "m6test".into(),
             body: None,
+            param_defaults: None,
+            extra_examples: vec![],
         };
         function_edit::upsert_function("Files.ps1", draft).expect("upsert");
 

@@ -9,7 +9,13 @@
     type SessionSummary,
     type ValidatedCodeBlock
   } from "../api";
+  import {
+    filterSlashCommands,
+    parseSlashQuery,
+    type SlashCommand
+  } from "../slashCommands";
   import { showToast } from "../stores/toast";
+  import MarkdownText from "./MarkdownText.svelte";
 
   let {
     categories,
@@ -51,6 +57,47 @@
     listText: string;
   } | null>(null);
   let persistTimer: ReturnType<typeof setTimeout> | null = null;
+  /** /resume 选号：连按两次 Esc 取消（与 /cancel 等价） */
+  let lastEscAt = 0;
+  /** `/` 命令联想高亮下标；与当前 input 相同时表示已填入/Esc 关闭 */
+  let slashIndex = $state(0);
+  let slashSuppressedFor = $state<string | null>(null);
+
+  let slashMatches = $derived.by(() => {
+    const q = parseSlashQuery(input, !!resumePick);
+    if (q === null) return [] as SlashCommand[];
+    return filterSlashCommands(q, !!resumePick);
+  });
+  let slashOpen = $derived(
+    slashMatches.length > 0 && slashSuppressedFor !== input
+  );
+  let slashPrefixKey = $derived(
+    parseSlashQuery(input, !!resumePick) ?? ""
+  );
+
+  $effect(() => {
+    void slashPrefixKey;
+    slashIndex = 0;
+  });
+
+  $effect(() => {
+    if (slashIndex >= slashMatches.length) {
+      slashIndex = Math.max(0, slashMatches.length - 1);
+    }
+  });
+
+  function acceptSlash(cmd?: SlashCommand) {
+    const pick = cmd ?? slashMatches[slashIndex];
+    if (!pick) return;
+    const next = pick.name;
+    input = next;
+    slashSuppressedFor = next;
+    slashIndex = 0;
+  }
+
+  function closeSlashPalette() {
+    slashSuppressedFor = input;
+  }
 
   /** 就地编辑：正在编辑的用户消息 id；null 表示未在编辑 */
   let editingId = $state<string | null>(null);
@@ -175,8 +222,18 @@
       });
     };
     window.addEventListener("ai-config-changed", onConfigChanged);
+    const onKeydown = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      // 联想面板打开时优先关闭面板（由 textarea 处理）；此处仅处理选号 Esc×2
+      if (slashOpen) return;
+      if (!resumePick) return;
+      e.preventDefault();
+      handleResumeEscape();
+    };
+    window.addEventListener("keydown", onKeydown);
     return () => {
       window.removeEventListener("ai-config-changed", onConfigChanged);
+      window.removeEventListener("keydown", onKeydown);
       if (persistTimer) clearTimeout(persistTimer);
       void persistNow();
     };
@@ -212,13 +269,34 @@
       listText: result.list_text
     };
     input = "";
+    lastEscAt = 0;
     showToast(
       result.summaries.length
-        ? `请输入编号 1–${result.summaries.length} 恢复，或 /cancel`
+        ? `请输入编号 1–${result.summaries.length} 恢复；/cancel 或连按两次 Esc 取消`
         : "暂无历史会话",
       "info",
-      3500
+      4000
     );
+  }
+
+  function cancelResumePick(reason: "command" | "esc" = "command") {
+    if (!resumePick) return;
+    resumePick = null;
+    lastEscAt = 0;
+    errMsg = null;
+    input = "";
+    showToast(reason === "esc" ? "已取消恢复（Esc）" : "已取消恢复", "info", 2000);
+  }
+
+  function handleResumeEscape() {
+    if (!resumePick) return;
+    const now = Date.now();
+    if (now - lastEscAt < 1500) {
+      cancelResumePick("esc");
+      return;
+    }
+    lastEscAt = now;
+    showToast("再按一次 Esc 取消恢复列表", "info", 2000);
   }
 
   async function confirmResumeByNumber(n: number) {
@@ -252,10 +330,7 @@
     // 选号模式：只接受数字 /cancel /resume，绝不把杂输入发给模型
     if (resumePick) {
       if (cmd === "/cancel") {
-        resumePick = null;
-        input = "";
-        errMsg = null;
-        showToast("已取消恢复", "info", 2000);
+        cancelResumePick("command");
         return true;
       }
       if (cmd === "/resume" || cmd === "/sessions") {
@@ -272,7 +347,7 @@
         });
         return true;
       }
-      errMsg = `请输入编号 1–${resumePick.summaries.length || 0} 恢复会话，或输入 /cancel 取消`;
+      errMsg = `请输入编号 1–${resumePick.summaries.length || 0} 恢复；/cancel 或连按两次 Esc 取消`;
       input = "";
       return true;
     }
@@ -675,6 +750,7 @@
   {#if resumePick}
     <div class="px-4 py-3 bg-dst-elevated border-b border-dst-border text-dst-fg text-xs whitespace-pre-wrap font-mono leading-relaxed">
       {resumePick.listText}
+      <p class="mt-2 text-dst-fg-muted font-sans">提示：输入编号恢复；/cancel 或连按两次 Esc 取消</p>
     </div>
   {/if}
 
@@ -763,8 +839,8 @@
           </div>
           <div class="flex flex-col gap-2 max-w-[85%] min-w-0">
             {#if textWithoutCode(m.content)}
-              <div class="bg-dst-bubble-ai rounded-lg rounded-tl-sm px-3 py-2 text-sm text-dst-bubble-ai-fg whitespace-pre-wrap break-words">
-                {textWithoutCode(m.content)}
+              <div class="bg-dst-bubble-ai rounded-lg rounded-tl-sm px-3 py-2 text-dst-bubble-ai-fg">
+                <MarkdownText source={textWithoutCode(m.content)} />
               </div>
             {/if}
             {#if replyCodeBlocks[i]}
@@ -885,31 +961,90 @@
       <p class="text-xs text-dst-warning-fg px-1">正在编辑上方消息 — 请在气泡内点「重新发送」</p>
     {/if}
     <div class="flex gap-2 items-end">
-      <textarea
-        id="dst-chat-input"
-        bind:value={input}
-        rows={rewindBackup ? 5 : 2}
-        onkeydown={(e) => {
-          if (e.key === "Enter" && !e.shiftKey && !loading && !editingId) {
-            e.preventDefault();
-            void send();
-          }
-        }}
-        placeholder={resumePick
-          ? `输入编号 1–${resumePick.summaries.length || 0} 恢复，或 /cancel`
-          : rewindBackup
-            ? "回退后可修改，然后发送…"
-            : dangerMode
-              ? "危险模式已开…（/safe 关闭）"
-              : "继续追问…（/resume 历史 · /new 新建 · Shift+Enter 换行）"}
-        class="flex-1 px-3 py-2 text-sm bg-dst-elevated border rounded-lg text-dst-fg focus:outline-none resize-y min-h-[2.5rem] max-h-48 {resumePick
-          ? 'border-dst-accent focus:border-dst-accent'
-          : rewindBackup
-            ? 'border-dst-warning focus:border-dst-warning'
-            : dangerMode
-              ? 'border-dst-danger-border focus:border-dst-danger-border'
-              : 'border-dst-border focus:border-dst-accent'}"
-        disabled={loading || !profileId || editingId !== null}></textarea>
+      <div class="relative flex-1 min-w-0">
+        {#if slashOpen}
+          <div
+            class="absolute bottom-full left-0 right-0 mb-1 z-30 rounded-lg border border-dst-border bg-dst-surface shadow-lg overflow-hidden max-h-56 overflow-y-auto"
+            role="listbox"
+            aria-label="斜杠命令联想">
+            {#each slashMatches as cmd, i (cmd.name)}
+              <button
+                type="button"
+                role="option"
+                aria-selected={i === slashIndex}
+                class="w-full flex items-baseline gap-3 px-3 py-2 text-left text-sm transition-colors {i === slashIndex
+                  ? 'bg-dst-menu-hover'
+                  : 'hover:bg-dst-elevated'}"
+                onmousedown={(e) => {
+                  // 避免抢焦点导致 textarea blur 后 Enter 异常
+                  e.preventDefault();
+                  acceptSlash(cmd);
+                }}>
+                <code class="font-mono text-dst-accent shrink-0">{cmd.name}</code>
+                <span class="text-xs text-dst-fg-muted truncate">{cmd.description}</span>
+              </button>
+            {/each}
+            <div class="px-3 py-1.5 text-[10px] text-dst-fg-subtle border-t border-dst-border bg-dst-elevated/50">
+              ↑↓ 选择 · Tab/Enter 填入 · Esc 关闭
+            </div>
+          </div>
+        {/if}
+        <textarea
+          id="dst-chat-input"
+          bind:value={input}
+          rows={rewindBackup ? 5 : 2}
+          onkeydown={(e) => {
+            if (slashOpen) {
+              if (e.key === "ArrowDown") {
+                e.preventDefault();
+                slashIndex = (slashIndex + 1) % slashMatches.length;
+                return;
+              }
+              if (e.key === "ArrowUp") {
+                e.preventDefault();
+                slashIndex =
+                  (slashIndex - 1 + slashMatches.length) % slashMatches.length;
+                return;
+              }
+              if (e.key === "Tab") {
+                e.preventDefault();
+                acceptSlash();
+                return;
+              }
+              if (e.key === "Enter" && !e.shiftKey) {
+                e.preventDefault();
+                acceptSlash();
+                return;
+              }
+              if (e.key === "Escape") {
+                e.preventDefault();
+                e.stopPropagation();
+                closeSlashPalette();
+                return;
+              }
+            }
+            // Esc 选号：由 window 统一处理（避免冒泡导致一次按键计两次）
+            if (e.key === "Enter" && !e.shiftKey && !loading && !editingId) {
+              e.preventDefault();
+              void send();
+            }
+          }}
+          placeholder={resumePick
+            ? `编号 1–${resumePick.summaries.length || 0} 恢复 · /cancel 或 Esc×2 取消`
+            : rewindBackup
+              ? "回退后可修改，然后发送…"
+              : dangerMode
+                ? "危险模式已开…（/safe 关闭）"
+                : "继续追问…（输入 / 可联想命令 · Shift+Enter 换行）"}
+          class="w-full px-3 py-2 text-sm bg-dst-elevated border rounded-lg text-dst-fg focus:outline-none resize-y min-h-[2.5rem] max-h-48 {resumePick
+            ? 'border-dst-accent focus:border-dst-accent'
+            : rewindBackup
+              ? 'border-dst-warning focus:border-dst-warning'
+              : dangerMode
+                ? 'border-dst-danger-border focus:border-dst-danger-border'
+                : 'border-dst-border focus:border-dst-accent'}"
+          disabled={loading || !profileId || editingId !== null}></textarea>
+      </div>
       {#if loading}
         <button
           type="button"

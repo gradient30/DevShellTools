@@ -18,10 +18,22 @@ export interface InitProgress {
   percent: number;
 }
 
+export interface PsParam {
+  name: string;
+  type_name: string;
+  default_value: string | null;
+  mandatory: boolean;
+  position: number | null;
+  is_switch: boolean;
+  description: string;
+}
+
 export interface PsFunction {
   name: string;
   synopsis: string;
   first_example: string;
+  examples?: string[];
+  parameters?: PsParam[];
 }
 
 export interface CategoryMeta {
@@ -221,7 +233,8 @@ export const api = {
     synopsis: string,
     example: string,
     body: string | null,
-    message: string
+    message: string,
+    paramDefaults?: Record<string, string> | null
   ) =>
     invoke<void>("upsert_function", {
       fileName,
@@ -229,6 +242,7 @@ export const api = {
       synopsis,
       example,
       body,
+      paramDefaults: paramDefaults ?? null,
       message
     }),
   deleteFunction: (fileName: string, funcName: string, message: string) =>

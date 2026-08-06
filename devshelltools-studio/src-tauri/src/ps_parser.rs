@@ -4,6 +4,26 @@ use serde::{Deserialize, Serialize};
 use std::process::Command;
 use std::sync::OnceLock;
 
+/// 函数参数（从 AST ParamBlock 提取）。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub struct PsParam {
+    pub name: String,
+    #[serde(default)]
+    pub type_name: String,
+    /// 默认值源码文本，如 `20`、`""`；无默认则为 null
+    #[serde(default)]
+    pub default_value: Option<String>,
+    #[serde(default)]
+    pub mandatory: bool,
+    #[serde(default)]
+    pub position: Option<i32>,
+    #[serde(default)]
+    pub is_switch: bool,
+    /// 来自注释帮助 `.PARAMETER`，可能为空
+    #[serde(default)]
+    pub description: String,
+}
+
 /// 一个 PowerShell 函数的元信息（从 AST 提取）。
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct PsFunction {
@@ -11,6 +31,11 @@ pub struct PsFunction {
     pub synopsis: String,
     #[serde(rename = "first_example")]
     pub first_example: String,
+    /// PS ConvertTo-Json 会把单元素数组拆成标量
+    #[serde(default, deserialize_with = "deserialize_string_or_array")]
+    pub examples: Vec<String>,
+    #[serde(default, deserialize_with = "deserialize_param_vec")]
+    pub parameters: Vec<PsParam>,
 }
 
 /// 一个分类的元信息（从 @DST-Category 块提取）。
@@ -41,10 +66,12 @@ where
     #[derive(Deserialize)]
     #[serde(untagged)]
     enum StrOrArr {
+        Null,
         Single(String),
         Multi(Vec<String>),
     }
     match StrOrArr::deserialize(deserializer)? {
+        StrOrArr::Null => Ok(vec![]),
         StrOrArr::Single(s) => {
             if s.trim().is_empty() {
                 Ok(vec![])
@@ -55,6 +82,100 @@ where
         StrOrArr::Multi(v) => Ok(v),
     }
 }
+
+/// 兼容单参数对象被 ConvertTo-Json 拆成非数组。
+fn deserialize_param_vec<'de, D>(deserializer: D) -> Result<Vec<PsParam>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum OneOrMany {
+        Null,
+        One(PsParam),
+        Many(Vec<PsParam>),
+    }
+    match OneOrMany::deserialize(deserializer)? {
+        OneOrMany::Null => Ok(vec![]),
+        OneOrMany::One(p) => Ok(vec![p]),
+        OneOrMany::Many(v) => Ok(v),
+    }
+}
+
+/// 从 FunctionDefinitionAst 提取 synopsis / examples / parameters。
+const PS_FN_META_HELPER: &str = r#"
+function ConvertTo-DstFunctionMeta {
+    param($FnAst)
+    $synopsis = ''; $examples = @(); $parameters = @()
+    $help = $FnAst.GetHelpContent()
+    if ($help -and $help.Synopsis) { $synopsis = $help.Synopsis.Trim() }
+    if ($help -and $help.Examples) {
+        foreach ($ex in $help.Examples) {
+            $line = (($ex -split "`r?`n") | Where-Object { $_.Trim() } | Select-Object -First 1)
+            if ($line) { $examples += $line.Trim() }
+        }
+    }
+    $firstExample = if ($examples.Count -gt 0) { $examples[0] } else { '' }
+    $pb = $FnAst.Body.ParamBlock
+    if ($pb) {
+        foreach ($p in $pb.Parameters) {
+            $pname = $p.Name.VariablePath.UserPath
+            $typeName = 'object'
+            if ($p.StaticType) { $typeName = $p.StaticType.Name }
+            $isSwitch = ($typeName -eq 'SwitchParameter') -or ($typeName -eq 'switch')
+            $mandatory = $false
+            $position = $null
+            foreach ($a in $p.Attributes) {
+                $tn = $a.TypeName.Name
+                if ($tn -eq 'Parameter') {
+                    foreach ($named in $a.NamedArguments) {
+                        if ($named.ArgumentName -eq 'Mandatory') {
+                            try { if ($named.Argument.SafeGetValue()) { $mandatory = $true } } catch {}
+                        }
+                        elseif ($named.ArgumentName -eq 'Position') {
+                            try { $position = [int]$named.Argument.SafeGetValue() } catch {}
+                        }
+                    }
+                }
+            }
+            $def = $null
+            if ($null -ne $p.DefaultValue) { $def = $p.DefaultValue.Extent.Text.Trim() }
+            $desc = ''
+            if ($help -and $help.Parameters) {
+                try {
+                    $rawDesc = $help.Parameters[$pname]
+                    if ($null -ne $rawDesc) { $desc = ([string]$rawDesc).Trim() }
+                } catch {}
+            }
+            if (-not $desc) {
+                if ($pname -match '^(Count|n|Num|Number|Limit|Max)$') {
+                    if ($synopsis -match '提交|历史|log') { $desc = '提交历史数量' }
+                    else { $desc = '数量' }
+                }
+                elseif ($pname -match '^(Path|File|Dir|Directory)$') { $desc = '路径' }
+                elseif ($isSwitch) { $desc = '开关' }
+                else { $desc = "参数 $pname" }
+            }
+            $parameters += [PSCustomObject]@{
+                name = $pname
+                type_name = $typeName
+                default_value = $def
+                mandatory = $mandatory
+                position = $position
+                is_switch = [bool]$isSwitch
+                description = $desc
+            }
+        }
+    }
+    [PSCustomObject]@{
+        name = $FnAst.Name
+        synopsis = $synopsis
+        first_example = $firstExample
+        examples = $examples
+        parameters = $parameters
+    }
+}
+"#;
 
 /// 调用 powershell.exe 解析 .ps1 文本，返回结构化结果。
 /// 把 content 通过临时文件传递，避免 stdin 管道死锁。
@@ -82,10 +203,10 @@ pub fn parse_ps1(content: &str) -> DstResult<ParsedPsFile> {
             .map_err(|e| DstError::PsParse(format!("写内容失败：{e}")))?;
     }
 
-    // 构造解析脚本：读取临时文件内容并解析
     let tmp_path_str = tmp_path.to_string_lossy().replace('\'', "''");
     let script = format!(
-        r#"$ErrorActionPreference = 'Stop'
+        r#"{helper}
+$ErrorActionPreference = 'Stop'
 $raw = Get-Content -LiteralPath '{tmp_path_str}' -Raw -Encoding UTF8
 $errors = $null
 $tokens = $null
@@ -111,15 +232,13 @@ if ($null -ne $ast) {{
     }}
     $fnAsts = $ast.FindAll({{ param($n, $_) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] }}, $true)
     foreach ($fnAst in $fnAsts) {{
-        $synopsis = ''; $example = ''
-        $help = $fnAst.GetHelpContent()
-        if ($help.Synopsis) {{ $synopsis = $help.Synopsis.Trim() }}
-        if ($help.Examples -and $help.Examples.Count -gt 0) {{ $example = ($help.Examples[0] -split "`r?`n")[0].Trim() }}
-        $result.functions += [PSCustomObject]@{{ name = $fnAst.Name; synopsis = $synopsis; first_example = $example }}
+        $result.functions += ConvertTo-DstFunctionMeta -FnAst $fnAst
     }}
 }}
-$result | ConvertTo-Json -Depth 5 -Compress
-"#
+$result | ConvertTo-Json -Depth 8 -Compress
+"#,
+        helper = PS_FN_META_HELPER,
+        tmp_path_str = tmp_path_str
     );
 
     let mut cmd = Command::new(exe);
@@ -174,7 +293,8 @@ pub fn parse_public_batch(paths: &[std::path::PathBuf]) -> DstResult<Vec<(String
     let paths_ps = path_literals.join(", ");
 
     let script = format!(
-        r#"$ErrorActionPreference = 'Stop'
+        r#"{helper}
+$ErrorActionPreference = 'Stop'
 function Get-ParsedFile {{
     param([string]$Path)
     $fileName = [System.IO.Path]::GetFileName($Path)
@@ -204,19 +324,17 @@ function Get-ParsedFile {{
         }}
         $fnAsts = $ast.FindAll({{ param($n, $_) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] }}, $true)
         foreach ($fnAst in $fnAsts) {{
-            $synopsis = ''; $example = ''
-            $help = $fnAst.GetHelpContent()
-            if ($help.Synopsis) {{ $synopsis = $help.Synopsis.Trim() }}
-            if ($help.Examples -and $help.Examples.Count -gt 0) {{ $example = ($help.Examples[0] -split "`r?`n")[0].Trim() }}
-            $functions += [PSCustomObject]@{{ name = $fnAst.Name; synopsis = $synopsis; first_example = $example }}
+            $functions += ConvertTo-DstFunctionMeta -FnAst $fnAst
         }}
     }}
     [PSCustomObject]@{{ fileName = $fileName; category = $category; functions = $functions; parseErrors = $parseErrors }}
 }}
 $items = @()
 foreach ($p in @({paths_ps})) {{ $items += Get-ParsedFile -Path $p }}
-[PSCustomObject]@{{ items = $items }} | ConvertTo-Json -Depth 6 -Compress
-"#
+[PSCustomObject]@{{ items = $items }} | ConvertTo-Json -Depth 8 -Compress
+"#,
+        helper = PS_FN_META_HELPER,
+        paths_ps = paths_ps
     );
 
     let mut cmd = Command::new(exe);
@@ -386,6 +504,13 @@ mod tests {
         assert!(names.contains(&"gs"));
         assert!(names.contains(&"gg"));
         assert!(names.contains(&"gclean"));
+        let gg = r.functions.iter().find(|f| f.name == "gg").expect("gg");
+        assert!(
+            gg.parameters.iter().any(|p| p.name == "Count" && p.default_value.as_deref() == Some("20")),
+            "gg 应解析出 Count=20，实际 {:?}",
+            gg.parameters
+        );
+        assert!(gg.examples.len() >= 1, "gg 应有示例");
     }
 
     #[test]
