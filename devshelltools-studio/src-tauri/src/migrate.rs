@@ -219,13 +219,14 @@ pub fn migrate_from_legacy() -> DstResult<MigrateResult> {
     crate::sync::invalidate_category_cache();
     crate::sync::regenerate_all()?;
     workspace::touch_last_sync()?;
-    // 把工作区最新内容同步到 PS7 等运行时目录（它们是当前安装镜像，不是旧版）
-    let sync_note = install_mgr::sync_runtime_modules().unwrap_or_default();
 
     let mut archived_dirs = vec![];
     if let Some(archived) = archive_old_sandbox()? {
         archived_dirs.push(archived);
     }
+
+    // 同步运行时目录；失败须暴露给用户，禁止写「已对齐」假成功
+    let sync_result = install_mgr::sync_runtime_modules();
 
     let message = {
         let mut parts = vec![format!(
@@ -235,13 +236,24 @@ pub fn migrate_from_legacy() -> DstResult<MigrateResult> {
         if !archived_dirs.is_empty() {
             parts.push(format!("已归档旧沙箱 → {}", archived_dirs.join("、")));
         }
-        if !sync_note.is_empty() {
-            parts.push(sync_note);
+        match &sync_result {
+            Ok(note) if !note.is_empty() => {
+                parts.push(note.clone());
+                parts.push("PowerShell 7 / 5.1 模块目录已按当前工作区对齐，不再视为旧版。".into());
+            }
+            Ok(_) => {
+                parts.push("PowerShell 7 / 5.1 模块目录已按当前工作区对齐，不再视为旧版。".into());
+            }
+            Err(e) => {
+                parts.push(format!(
+                    "工作区已更新，但同步到 PowerShell 模块目录失败：{e}（可稍后在工具箱重试或手动「同步公共部分」）"
+                ));
+            }
         }
-        parts.push("PowerShell 7 / 5.1 模块目录已按当前工作区对齐，不再视为旧版。".into());
         parts.join("。")
     };
 
+    // 工作区合并/归档已成功时仍返回 Ok，但 message 标明同步失败，供 UI 用 info/warn 展示
     Ok(MigrateResult {
         migrated_files: migrated,
         archived_dirs,

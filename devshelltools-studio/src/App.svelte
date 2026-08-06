@@ -409,7 +409,7 @@
 
   {#if $loading && !$workspace}
     <div class="flex-1 flex flex-col items-center justify-center text-dst-fg-muted gap-3">
-      <div class="h-8 w-8 border-2 border-dst-accent/30 border-t-cyan-400 rounded-full animate-spin"></div>
+      <div class="h-8 w-8 border-2 border-dst-accent/30 border-t-dst-accent rounded-full animate-spin"></div>
       <p class="text-sm">正在连接工作区…</p>
     </div>
   {:else if !$workspace?.initialized}
@@ -443,7 +443,7 @@
     <div class="flex-1 flex flex-col min-h-0 overflow-hidden">
     {#if categoriesLoading}
       <div class="px-4 py-2 bg-dst-surface border-b border-dst-accent text-dst-fg text-sm flex items-center gap-3 shrink-0">
-        <div class="h-4 w-4 border-2 border-dst-accent/30 border-t-cyan-400 rounded-full animate-spin shrink-0"></div>
+        <div class="h-4 w-4 border-2 border-dst-accent/30 border-t-dst-accent rounded-full animate-spin shrink-0"></div>
         <span>{categoriesLoadMsg || "正在加载分类信息…"}</span>
         <span class="text-xs text-dst-accent/80 ml-auto">首次约 5–10 秒，之后从缓存秒开；加载期间请稍候</span>
       </div>
@@ -458,7 +458,7 @@
             class="absolute inset-0 z-20 bg-dst-bg/40 backdrop-blur-[1px] flex items-center justify-center pointer-events-auto"
             aria-busy="true">
             <div class="bg-dst-surface border border-dst-border rounded-lg px-5 py-4 text-sm text-dst-fg shadow-lg max-w-sm text-center">
-              <div class="mx-auto mb-3 h-6 w-6 border-2 border-dst-accent/30 border-t-cyan-400 rounded-full animate-spin"></div>
+              <div class="mx-auto mb-3 h-6 w-6 border-2 border-dst-accent/30 border-t-dst-accent rounded-full animate-spin"></div>
               <p>{categoriesLoadMsg || "正在解析分类元数据…"}</p>
               <p class="text-xs text-dst-fg-muted mt-2">后台调用 PowerShell AST，界面暂时锁定以免误点</p>
             </div>

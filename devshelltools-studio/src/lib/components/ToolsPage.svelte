@@ -1,5 +1,6 @@
 <script lang="ts">
   import { api, type MigrationCheck, type MigrateResult, type Webview2Status } from "../api";
+  import { showToast } from "../stores/toast";
 
   let {
     migration = null,
@@ -41,7 +42,15 @@
       const archived = result.archived_dirs.length
         ? `\n已归档：${result.archived_dirs.join("；")}`
         : "";
-      msg = `${result.message}\n${files}${archived}`;
+      const full = `${result.message}\n${files}${archived}`;
+      // 同步失败时后端仍可能 Ok，但 message 含失败说明——用警告而非成功绿条
+      if (result.message.includes("同步到 PowerShell 模块目录失败")) {
+        errMsg = full;
+        showToast(result.message, "error", 7000);
+      } else {
+        msg = full;
+        showToast(result.message, "success", 5000);
+      }
       await onRefresh();
     } catch (e) {
       errMsg = String(e);
@@ -157,7 +166,7 @@
     </section>
 
     <section class="bg-dst-elevated rounded-lg p-4 border border-dst-border">
-      <h3 class="text-sm font-semibold text-emerald-300 mb-2">WebView2 Runtime</h3>
+      <h3 class="text-sm font-semibold text-dst-success mb-2">WebView2 Runtime</h3>
       {#if webview2?.installed}
         <p class="text-xs text-dst-success">已安装，版本 {webview2.version}</p>
       {:else}

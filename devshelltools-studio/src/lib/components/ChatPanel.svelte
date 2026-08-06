@@ -595,7 +595,7 @@
                       <div class="flex items-center gap-2 text-xs">
                         <span class="text-dst-fg-muted font-mono">{expandedBlocks.has(key) ? "▾" : "▸"}</span>
                         <span class="text-dst-accent font-mono">{title}</span>
-                        <span class="text-emerald-500/80">最新</span>
+                        <span class="text-dst-success">最新</span>
                         <span class="text-dst-fg-muted">{block.syntax_ok ? "语法✓" : "语法✗"} · {block.safety_ok ? "安全✓" : "安全✗"}</span>
                       </div>
                     </div>

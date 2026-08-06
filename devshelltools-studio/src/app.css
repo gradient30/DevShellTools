@@ -157,10 +157,11 @@
   --dst-danger-bg: #4c0519;
   --dst-danger-border: #e11d48;
   --dst-success: #4ade80;
-  --dst-success-fg: #052e16;
+  /* 深底上的状态字必须用浅色；实心按钮另走 btn-*-fg */
+  --dst-success-fg: #bbf7d0;
   --dst-success-bg: #14532d;
   --dst-warning: #fbbf24;
-  --dst-warning-fg: #1c1917;
+  --dst-warning-fg: #fde68a;
   --dst-warning-bg: #78350f;
   --dst-code-bg: #071525;
   --dst-bubble-user: #0891b2;
