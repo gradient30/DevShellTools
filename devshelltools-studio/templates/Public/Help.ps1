@@ -131,7 +131,18 @@ function Show-DstCategoryCommands {
     Write-Host $meta.说明 -ForegroundColor Cyan
     Write-Host ""
 
-    $entries = $script:DstHelpData[$Category]
+    $entries = @(
+        foreach ($entry in @($script:DstHelpData[$Category])) {
+            # 兼容错误生成的拍平字符串；正常条目为长度≥3的数组
+            if ($entry -is [System.Array] -and $entry.Length -ge 3) {
+                , $entry
+            }
+        }
+    )
+    if ($entries.Count -eq 0) {
+        Write-DstWarn "该分类暂无可用命令帮助（或 HelpData 格式异常，请在 Studio 中同步公共部分）。"
+        return
+    }
 
     $commandWidth = [Math]::Max(
         16,

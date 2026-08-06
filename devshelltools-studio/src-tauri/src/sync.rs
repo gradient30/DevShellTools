@@ -428,13 +428,29 @@ fn gen_help_data(cats: &[CategoryInfo]) -> String {
     let mut out = String::from("$script:DstHelpData = @{\n");
     for c in cats {
         out.push_str(&format!("    {} = @(\n", c.category.name));
-        for f in c.functions.iter().filter(|f| is_exported(&f.name)) {
+        let exported: Vec<_> = c
+            .functions
+            .iter()
+            .filter(|f| is_exported(&f.name))
+            .collect();
+        for f in &exported {
             // 命令展示：若是 "set/test/show" 这种带空格的（lpr 子命令），保留；否则用函数名
             let cmd_display = &f.name;
-            let synopsis = if f.synopsis.is_empty() { "(无说明)" } else { &f.synopsis };
-            let example = if f.first_example.is_empty() { &f.name } else { &f.first_example };
+            let synopsis = if f.synopsis.is_empty() {
+                "(无说明)"
+            } else {
+                &f.synopsis
+            };
+            let example = if f.first_example.is_empty() {
+                &f.name
+            } else {
+                &f.first_example
+            };
+            // 每条前加一元逗号 `,@(...)`，且条目之间不加分隔逗号：
+            // - 无一元逗号：单元素分类（如仅 lpr）会被拍平成字符串 → $entry[0] 变单字符
+            // - 一元逗号 + 行尾分隔逗号：会多包一层 → $entry[1] 越界
             out.push_str(&format!(
-                "        @(\"{}\",\"{}\",\"{}\")\n",
+                "        ,@(\"{}\",\"{}\",\"{}\")\n",
                 escape_ps_str(cmd_display),
                 escape_ps_str(synopsis),
                 escape_ps_str(example)
@@ -517,6 +533,12 @@ mod tests {
         assert!(help.contains("git = [PSCustomObject]"));
         assert!(help.contains("[ValidateSet(\"menu\",\"list\",\"help\",\"version\",\"files\",\"git\",\"network\",\"powershell\",\"proxy\")]"));
         assert!(help.contains("$script:DstHelpData = @{"));
+        // 回归：HelpData 须用一元逗号包裹嵌套数组，避免 PS 拍平导致 dsh <分类> 错位
+        assert!(
+            help.contains(",@(\"lt\",") && help.contains(",@(\"lpr\","),
+            "HelpData 条目应形如 ,@(\"name\",...)，实际 lt 行: {}",
+            help.lines().find(|l| l.contains("@(\"lt\"")).unwrap_or("(no lt line)")
+        );
         // gg 函数应出现在 git 分类的帮助数据中（synopsis 来自 AST，含"图形化"关键字）
         assert!(help.contains("@(\"gg\",\"显示图形化精简提交历史，默认显示 20 条。\",\"gg\")"));
         // 内部辅助函数不应进入帮助数据
