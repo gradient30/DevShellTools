@@ -1,6 +1,7 @@
 pub mod ai_client;
 pub mod ai_config;
 pub mod ai_presets;
+pub mod chat_session;
 pub mod commands;
 pub mod consistency;
 pub mod error;
@@ -73,6 +74,12 @@ pub fn run() {
             commands::ai_chat,
             commands::ai_cancel_chat,
             commands::ai_chat_with_validation,
+            commands::list_chat_sessions,
+            commands::load_chat_session,
+            commands::save_chat_session,
+            commands::new_chat_session,
+            commands::load_or_create_chat_session,
+            commands::set_active_chat_session,
             commands::check_migration,
             commands::migrate_legacy,
             commands::export_workspace,

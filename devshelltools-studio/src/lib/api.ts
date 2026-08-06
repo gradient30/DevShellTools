@@ -103,6 +103,37 @@ export interface AiChatResult {
   code_blocks: ValidatedCodeBlock[];
 }
 
+export interface SessionMessage {
+  id: string;
+  role: string;
+  content: string;
+}
+
+export interface ChatSession {
+  id: string;
+  title: string;
+  created_at: string;
+  updated_at: string;
+  profile_id: string;
+  danger_mode: boolean;
+  messages: SessionMessage[];
+  reply_code_blocks: Record<string, ValidatedCodeBlock[]>;
+  target_files: Record<string, string>;
+}
+
+export interface SessionSummary {
+  id: string;
+  title: string;
+  updated_at: string;
+  message_count: number;
+  preview: string;
+}
+
+export interface ResumeListResult {
+  summaries: SessionSummary[];
+  list_text: string;
+}
+
 export interface MigrationCheck {
   has_legacy: boolean;
   legacy_dirs: string[];
@@ -259,6 +290,16 @@ export const api = {
       profileId: profileId ?? null,
       dangerMode
     }),
+  listChatSessions: () => invoke<ResumeListResult>("list_chat_sessions"),
+  loadChatSession: (id: string) => invoke<ChatSession>("load_chat_session", { id }),
+  saveChatSession: (session: ChatSession) =>
+    invoke<ChatSession>("save_chat_session", { session }),
+  newChatSession: (profileId: string) =>
+    invoke<ChatSession>("new_chat_session", { profileId }),
+  loadOrCreateChatSession: (profileId: string) =>
+    invoke<ChatSession>("load_or_create_chat_session", { profileId }),
+  setActiveChatSession: (id: string) =>
+    invoke<void>("set_active_chat_session", { id }),
   checkMigration: () => invoke<MigrationCheck>("check_migration"),
   migrateLegacy: () => invoke<MigrateResult>("migrate_legacy"),
   exportWorkspace: (targetDir: string) => invoke<string[]>("export_workspace", { targetDir }),

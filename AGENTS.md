@@ -111,6 +111,8 @@ cargo test --offline --test m6_acceptance -- --test-threads=1
 
 **会话例外（Studio AI 助手）**：用户在 AI 对话中输入 `/danger` 可激活**本会话**最高权限（跳过 system prompt 与 AI 代码块的 `safety` 红线校验，插入前二次确认）；输入 `/safe` 或点横幅关闭可恢复默认红线（助手页用 CSS 保活，切 tab 不清危险模式）。管理页手写保存分类等路径始终走默认红线，不受 `/danger` 影响。
 
+**会话持久化**：对话自动写入工作区 `.studio/sessions/`；`/resume`（或 `/sessions`）在聊天区列出编号历史，输入数字确认恢复；`/new` 新建；`/cancel` 取消选号。选号列表为快照，编号与当次列表严格对应。
+
 ## 部署 / 发布
 
 - 模块发布即运行根目录 `install.ps1`（复制到 MyDocuments 下 PS5.1/PS7 模块目录并写 Profile）。

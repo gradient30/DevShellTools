@@ -1,6 +1,14 @@
 <script lang="ts">
   import { onMount, tick } from "svelte";
-  import { api, type AiProfile, type CategoryInfo, type ChatMessage, type ValidatedCodeBlock } from "../api";
+  import {
+    api,
+    type AiProfile,
+    type CategoryInfo,
+    type ChatMessage,
+    type ChatSession,
+    type SessionSummary,
+    type ValidatedCodeBlock
+  } from "../api";
   import { showToast } from "../stores/toast";
 
   let {
@@ -34,6 +42,15 @@
   let expandedBlocks = $state<Set<string>>(new Set());
   let lastAutoToken = $state(0);
   let profilesReady = $state(false);
+  let sessionReady = $state(false);
+  let sessionId = $state("");
+  let sessionTitle = $state("新会话");
+  /** /resume 选号模式：列表快照冻结，编号与 summaries 下标严格对应 */
+  let resumePick = $state<{
+    summaries: SessionSummary[];
+    listText: string;
+  } | null>(null);
+  let persistTimer: ReturnType<typeof setTimeout> | null = null;
 
   /** 就地编辑：正在编辑的用户消息 id；null 表示未在编辑 */
   let editingId = $state<string | null>(null);
@@ -57,6 +74,68 @@
     return list.map(({ role, content }) => ({ role, content }));
   }
 
+  function buildSessionPayload(): ChatSession {
+    const blocks: Record<string, ValidatedCodeBlock[]> = {};
+    for (const [k, v] of Object.entries(replyCodeBlocks)) {
+      blocks[String(k)] = v;
+    }
+    return {
+      id: sessionId || `pending-${Date.now()}`,
+      title: sessionTitle,
+      created_at: "",
+      updated_at: "",
+      profile_id: profileId,
+      danger_mode: dangerMode,
+      messages: messages.map((m) => ({ id: m.id, role: m.role, content: m.content })),
+      reply_code_blocks: blocks,
+      target_files: { ...targetFiles }
+    };
+  }
+
+  function applySession(sess: ChatSession) {
+    sessionId = sess.id;
+    sessionTitle = sess.title || "新会话";
+    profileId = sess.profile_id || profileId;
+    dangerMode = !!sess.danger_mode;
+    messages = (sess.messages || []).map((m) => ({
+      id: m.id || newId(m.role),
+      role: m.role,
+      content: m.content
+    }));
+    const blocks: Record<number, ValidatedCodeBlock[]> = {};
+    for (const [k, v] of Object.entries(sess.reply_code_blocks || {})) {
+      const n = parseInt(k, 10);
+      if (!Number.isNaN(n)) blocks[n] = v;
+    }
+    replyCodeBlocks = blocks;
+    targetFiles = { ...(sess.target_files || {}) };
+    expandedBlocks = new Set();
+    editingId = null;
+    editText = "";
+    rewindBackup = null;
+    resumePick = null;
+    errMsg = null;
+  }
+
+  async function persistNow() {
+    if (!sessionId || !profileId || resumePick) return;
+    try {
+      const saved = await api.saveChatSession(buildSessionPayload());
+      sessionId = saved.id;
+      sessionTitle = saved.title;
+    } catch (e) {
+      console.warn("会话保存失败", e);
+    }
+  }
+
+  function schedulePersist() {
+    if (persistTimer) clearTimeout(persistTimer);
+    persistTimer = setTimeout(() => {
+      persistTimer = null;
+      void persistNow();
+    }, 300);
+  }
+
   async function loadProfiles(syncDefault = true) {
     const meta = await api.getAiProfilesMeta();
     profiles = meta.profiles;
@@ -78,9 +157,14 @@
     void (async () => {
       try {
         await loadProfiles(true);
+        if (profileId) {
+          const sess = await api.loadOrCreateChatSession(profileId);
+          applySession(sess);
+        }
       } catch (e) {
         errMsg = String(e);
       } finally {
+        sessionReady = true;
         profilesReady = true;
       }
     })();
@@ -91,13 +175,17 @@
       });
     };
     window.addEventListener("ai-config-changed", onConfigChanged);
-    return () => window.removeEventListener("ai-config-changed", onConfigChanged);
+    return () => {
+      window.removeEventListener("ai-config-changed", onConfigChanged);
+      if (persistTimer) clearTimeout(persistTimer);
+      void persistNow();
+    };
   });
 
   // 仅响应「命令列表 → AI审阅」的 token，不与编辑/回退共享 effect，避免状态被冲掉
   $effect(() => {
     const token = autoSendToken;
-    const ready = profilesReady;
+    const ready = profilesReady && sessionReady;
     const pid = profileId;
     if (!ready || !pid) return;
     if (token <= 0 || token === lastAutoToken) return;
@@ -107,6 +195,7 @@
     editingId = null;
     editText = "";
     rewindBackup = null;
+    resumePick = null;
     replyCodeBlocks = {};
     targetFiles = {};
     expandedBlocks = new Set();
@@ -114,8 +203,94 @@
     void sendPrompt(prompt, { replaceAll: true });
   });
 
+  async function openResumeList() {
+    await persistNow();
+    const result = await api.listChatSessions();
+    // 冻结快照：之后编号只对这一次 summaries 有效
+    resumePick = {
+      summaries: result.summaries,
+      listText: result.list_text
+    };
+    input = "";
+    showToast(
+      result.summaries.length
+        ? `请输入编号 1–${result.summaries.length} 恢复，或 /cancel`
+        : "暂无历史会话",
+      "info",
+      3500
+    );
+  }
+
+  async function confirmResumeByNumber(n: number) {
+    const snap = resumePick;
+    if (!snap) return;
+    if (n < 1 || n > snap.summaries.length) {
+      errMsg = `编号无效：请输入 1–${snap.summaries.length}，或 /cancel`;
+      return;
+    }
+    const target = snap.summaries[n - 1];
+    if (!target) {
+      errMsg = "编号无效";
+      return;
+    }
+    const sess = await api.loadChatSession(target.id);
+    applySession(sess);
+    showToast(`已恢复：${sess.title || target.title}`, "success", 3000);
+  }
+
+  async function startNewSession() {
+    await persistNow();
+    const sess = await api.newChatSession(profileId);
+    applySession(sess);
+    showToast("已新建会话", "success", 2000);
+  }
+
   function handleSessionCommand(raw: string): boolean {
-    const cmd = raw.trim().toLowerCase();
+    const trimmed = raw.trim();
+    const cmd = trimmed.toLowerCase();
+
+    // 选号模式：只接受数字 /cancel /resume，绝不把杂输入发给模型
+    if (resumePick) {
+      if (cmd === "/cancel") {
+        resumePick = null;
+        input = "";
+        errMsg = null;
+        showToast("已取消恢复", "info", 2000);
+        return true;
+      }
+      if (cmd === "/resume" || cmd === "/sessions") {
+        input = "";
+        void openResumeList().catch((e) => {
+          errMsg = String(e);
+        });
+        return true;
+      }
+      if (/^\d+$/.test(trimmed)) {
+        input = "";
+        void confirmResumeByNumber(parseInt(trimmed, 10)).catch((e) => {
+          errMsg = String(e);
+        });
+        return true;
+      }
+      errMsg = `请输入编号 1–${resumePick.summaries.length || 0} 恢复会话，或输入 /cancel 取消`;
+      input = "";
+      return true;
+    }
+
+    if (cmd === "/resume" || cmd === "/sessions") {
+      input = "";
+      void openResumeList().catch((e) => {
+        errMsg = String(e);
+      });
+      return true;
+    }
+    if (cmd === "/new") {
+      input = "";
+      void startNewSession().catch((e) => {
+        errMsg = String(e);
+      });
+      return true;
+    }
     if (cmd === "/danger") {
       dangerMode = true;
       input = "";
@@ -130,6 +305,7 @@
         }
       ];
       showToast("危险模式已开启", "info", 3500);
+      schedulePersist();
       return true;
     }
     if (cmd === "/safe") {
@@ -145,6 +321,7 @@
         }
       ];
       showToast("已恢复安全模式", "success", 2500);
+      schedulePersist();
       return true;
     }
     return false;
@@ -155,8 +332,13 @@
     if (!trimmed || loading || !profileId) return;
     if (!opts?.replaceAll && handleSessionCommand(trimmed)) return;
 
+    // 正常对话时退出选号模式（不应发生：选号已拦截）
+    resumePick = null;
+
     if (opts?.replaceAll) {
       messages = [{ id: newId("user"), role: "user", content: trimmed }];
+      replyCodeBlocks = {};
+      targetFiles = {};
     } else {
       messages = [...messages, { id: newId("user"), role: "user", content: trimmed }];
     }
@@ -188,9 +370,11 @@
         });
         focusLatestBlocks(assistantIdx, result.code_blocks);
       }
+      schedulePersist();
     } catch (e) {
       const msg = String(e);
       if (!msg.includes("已停止生成")) errMsg = msg;
+      schedulePersist();
     } finally {
       loading = false;
     }
@@ -295,6 +479,7 @@
     truncateFrom(index);
     input = m.content;
     errMsg = null;
+    schedulePersist();
     showToast("已回退：修改底部内容后发送，或点「取消回退」", "info", 3500);
     await tick();
     const el = document.getElementById("dst-chat-input") as HTMLTextAreaElement | null;
@@ -310,6 +495,7 @@
     expandedBlocks = new Set(rewindBackup.expandedBlocks);
     input = rewindBackup.input;
     rewindBackup = null;
+    schedulePersist();
     showToast("已取消回退，对话已恢复", "info", 2000);
   }
 
@@ -436,18 +622,38 @@
     <div class="flex items-center gap-2 min-w-0">
       <span class="text-lg">🤖</span>
       <h3 class="text-sm font-semibold text-dst-accent shrink-0">AI 助手</h3>
+      <span class="text-xs text-dst-fg-muted truncate max-w-[140px]" title={sessionTitle}>{sessionTitle}</span>
       <select
         bind:value={profileId}
-        class="text-xs bg-dst-elevated border border-dst-border rounded px-2 py-1 text-dst-fg max-w-[180px]"
-        disabled={loading}>
+        class="text-xs bg-dst-elevated border border-dst-border rounded px-2 py-1 text-dst-fg max-w-[160px]"
+        disabled={loading}
+        onchange={() => schedulePersist()}>
         {#each profiles as p (p.id)}
           <option value={p.id}>{p.name} · {p.model}</option>
         {/each}
       </select>
     </div>
-    <button type="button" class="text-xs text-dst-fg-muted hover:text-dst-fg shrink-0" onclick={onOpenSettings}>
-      配置
-    </button>
+    <div class="flex items-center gap-2 shrink-0">
+      <button
+        type="button"
+        class="text-xs text-dst-fg-muted hover:text-dst-fg"
+        disabled={loading}
+        onclick={() => void openResumeList()}
+        title="列出历史会话">
+        /resume
+      </button>
+      <button
+        type="button"
+        class="text-xs text-dst-fg-muted hover:text-dst-fg"
+        disabled={loading}
+        onclick={() => void startNewSession()}
+        title="新建会话">
+        /new
+      </button>
+      <button type="button" class="text-xs text-dst-fg-muted hover:text-dst-fg" onclick={onOpenSettings}>
+        配置
+      </button>
+    </div>
   </div>
 
   {#if dangerMode}
@@ -458,10 +664,17 @@
         class="shrink-0 px-2 py-0.5 rounded border border-dst-danger-border hover:bg-dst-danger-bg"
         onclick={() => {
           dangerMode = false;
+          schedulePersist();
           showToast("已恢复安全模式", "success", 2000);
         }}>
         /safe
       </button>
+    </div>
+  {/if}
+
+  {#if resumePick}
+    <div class="px-4 py-3 bg-dst-elevated border-b border-dst-border text-dst-fg text-xs whitespace-pre-wrap font-mono leading-relaxed">
+      {resumePick.listText}
     </div>
   {/if}
 
@@ -473,12 +686,16 @@
   {/if}
 
   <div class="flex-1 overflow-y-auto px-4 py-4 space-y-4">
-    {#if messages.length === 0 && !loading}
+    {#if messages.length === 0 && !loading && !resumePick}
       <div class="flex flex-col items-center justify-center h-full text-center gap-3">
         <div class="text-4xl">🤖</div>
         <p class="text-sm text-dst-fg-muted">可直接提问，或从命令列表点「AI审阅」</p>
         <p class="text-xs text-dst-fg-subtle">审阅流程：检查问题 → 优化建议 → 可新增命令建议；校验通过后可插入分类</p>
-        <p class="text-xs text-dst-fg-subtle">需要破坏性 git 能力时输入 <code class="text-dst-warning">/danger</code>，用 <code class="text-dst-fg-muted">/safe</code> 关闭</p>
+        <p class="text-xs text-dst-fg-subtle">
+          会话会自动保存；输入 <code class="text-dst-accent">/resume</code> 按编号恢复，
+          <code class="text-dst-fg-muted">/new</code> 新建，
+          <code class="text-dst-warning">/danger</code> 放宽红线
+        </p>
       </div>
     {/if}
 
@@ -678,16 +895,20 @@
             void send();
           }
         }}
-        placeholder={rewindBackup
-          ? "回退后可修改，然后发送…"
-          : dangerMode
-            ? "危险模式已开…（/safe 关闭）"
-            : "继续追问…（/danger 放宽红线 · Shift+Enter 换行）"}
-        class="flex-1 px-3 py-2 text-sm bg-dst-elevated border rounded-lg text-dst-fg focus:outline-none resize-y min-h-[2.5rem] max-h-48 {rewindBackup
-          ? 'border-dst-warning focus:border-dst-warning'
-          : dangerMode
-            ? 'border-dst-danger-border focus:border-dst-danger-border'
-            : 'border-dst-border focus:border-dst-accent'}"
+        placeholder={resumePick
+          ? `输入编号 1–${resumePick.summaries.length || 0} 恢复，或 /cancel`
+          : rewindBackup
+            ? "回退后可修改，然后发送…"
+            : dangerMode
+              ? "危险模式已开…（/safe 关闭）"
+              : "继续追问…（/resume 历史 · /new 新建 · Shift+Enter 换行）"}
+        class="flex-1 px-3 py-2 text-sm bg-dst-elevated border rounded-lg text-dst-fg focus:outline-none resize-y min-h-[2.5rem] max-h-48 {resumePick
+          ? 'border-dst-accent focus:border-dst-accent'
+          : rewindBackup
+            ? 'border-dst-warning focus:border-dst-warning'
+            : dangerMode
+              ? 'border-dst-danger-border focus:border-dst-danger-border'
+              : 'border-dst-border focus:border-dst-accent'}"
         disabled={loading || !profileId || editingId !== null}></textarea>
       {#if loading}
         <button

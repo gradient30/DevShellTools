@@ -1,5 +1,6 @@
 use crate::ai_client;
 use crate::ai_config::{self, AiConfig, AiProfile, ChatMessage};
+use crate::chat_session::{self, ChatSession, SessionSummary};
 use crate::consistency;
 use crate::error::{DstError, DstResult};
 use crate::export;
@@ -420,6 +421,51 @@ pub struct ValidatedCodeBlock { pub code: String, pub syntax_ok: bool, pub synta
 
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct AiChatResult { pub reply: String, pub code_blocks: Vec<ValidatedCodeBlock> }
+
+// ============ AI 会话持久化 /resume ============
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct ResumeListResult {
+    pub summaries: Vec<SessionSummary>,
+    pub list_text: String,
+}
+
+#[tauri::command]
+pub fn list_chat_sessions() -> DstResult<ResumeListResult> {
+    let summaries = chat_session::list_sessions()?;
+    let list_text = chat_session::format_resume_list(&summaries);
+    Ok(ResumeListResult {
+        summaries,
+        list_text,
+    })
+}
+
+#[tauri::command]
+pub fn load_chat_session(id: String) -> DstResult<ChatSession> {
+    let sess = chat_session::load_session(&id)?;
+    chat_session::set_active_id(Some(&id))?;
+    Ok(sess)
+}
+
+#[tauri::command]
+pub fn save_chat_session(session: ChatSession) -> DstResult<ChatSession> {
+    chat_session::save_session(session)
+}
+
+#[tauri::command]
+pub fn new_chat_session(profile_id: String) -> DstResult<ChatSession> {
+    chat_session::new_session(&profile_id)
+}
+
+#[tauri::command]
+pub fn load_or_create_chat_session(profile_id: String) -> DstResult<ChatSession> {
+    chat_session::load_or_create_active(&profile_id)
+}
+
+#[tauri::command]
+pub fn set_active_chat_session(id: String) -> DstResult<()> {
+    chat_session::set_active_id(Some(&id))
+}
 
 // ============ M4：迁移 / 导出导入 / 日志 / WebView2 ============
 
