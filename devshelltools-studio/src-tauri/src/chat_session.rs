@@ -443,13 +443,7 @@ mod tests {
                 role: "user".into(),
                 content: "审阅 gs".into(),
             });
-            // 强制比 a 更新的时间戳，避免同毫秒排序抖动
-            b.updated_at = format!(
-                "{}Z",
-                (Utc::now() + chrono::Duration::seconds(2))
-                    .format("%Y-%m-%dT%H:%M:%S%.3f")
-            );
-            // save_session 会重写 updated_at=now；先睡再存保证 > a
+            // save_session 会重写 updated_at=now；再睡保证严格晚于 a
             std::thread::sleep(std::time::Duration::from_millis(50));
             let b = save_session(b).unwrap();
 
