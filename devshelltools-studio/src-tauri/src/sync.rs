@@ -411,13 +411,26 @@ fn regenerate_help_ps1(cats: &[CategoryInfo], _extras: &[PsFunction]) -> DstResu
 fn gen_category_meta(cats: &[CategoryInfo]) -> String {
     let mut out = String::from("$script:DstCategoryMeta = [ordered]@{\n");
     for (i, c) in cats.iter().enumerate() {
+        let aliases = if c.category.aliases.is_empty() {
+            "@()".to_string()
+        } else {
+            let parts: Vec<String> = c
+                .category
+                .aliases
+                .iter()
+                .map(|a| format!("\"{}\"", escape_ps_str(a)))
+                .collect();
+            format!("@({})", parts.join(","))
+        };
+        // 编号与 Keys 顺序一致；菜单/帮助必须按 编号 解析，禁止硬编码 1=files 等映射
         out.push_str(&format!(
-            "    {} = [PSCustomObject]@{{\n        编号 = {}\n        分类 = \"{}\"\n        说明 = \"{}\"\n        示例 = \"dsh {}\"\n    }}\n",
+            "    {} = [PSCustomObject]@{{\n        编号 = {}\n        分类 = \"{}\"\n        说明 = \"{}\"\n        示例 = \"dsh {}\"\n        别名 = {}\n    }}\n",
             c.category.name,
             i + 1,
             c.category.title,
             c.category.description,
-            c.category.name
+            c.category.name,
+            aliases
         ));
     }
     out.push_str("}\n");
@@ -533,6 +546,18 @@ mod tests {
         assert!(help.contains("git = [PSCustomObject]"));
         assert!(help.contains("[ValidateSet(\"menu\",\"list\",\"help\",\"version\",\"files\",\"git\",\"network\",\"powershell\",\"proxy\")]"));
         assert!(help.contains("$script:DstHelpData = @{"));
+        assert!(
+            help.contains("别名 = "),
+            "CategoryMeta 应含别名字段，供菜单按别名解析"
+        );
+        assert!(
+            help.contains("Resolve-DstCategoryKey"),
+            "Help.ps1 须含动态分类解析，禁止硬编码编号映射"
+        );
+        assert!(
+            !help.contains("\"1\" { Show-DstCategoryCommands"),
+            "禁止硬编码菜单编号（如 1=files），新增分类后会与 CategoryMeta 编号错位"
+        );
         // 回归：HelpData 须用一元逗号包裹嵌套数组，避免 PS 拍平导致 dsh <分类> 错位
         assert!(
             help.contains(",@(\"lt\",") && help.contains(",@(\"lpr\","),

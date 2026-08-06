@@ -5,30 +5,35 @@ $script:DstCategoryMeta = [ordered]@{
         分类 = "文件管理"
         说明 = "目录浏览、最近修改、目录大小、快速跳转"
         示例 = "dsh files"
-    }
-    powershell = [PSCustomObject]@{
-        编号 = 2
-        分类 = "管理员与 PowerShell"
-        说明 = "管理员窗口、执行策略、Profile、命令来源"
-        示例 = "dsh powershell"
-    }
-    proxy = [PSCustomObject]@{
-        编号 = 3
-        分类 = "代理管理"
-        说明 = "当前会话代理设置、检查、移除与诊断"
-        示例 = "dsh proxy"
+        别名 = @("文件")
     }
     git = [PSCustomObject]@{
-        编号 = 4
+        编号 = 2
         分类 = "Git"
         说明 = "状态、分支、提交、拉取、推送、日志和安全预览"
         示例 = "dsh git"
+        别名 = @()
     }
     network = [PSCustomObject]@{
-        编号 = 5
+        编号 = 3
         分类 = "网络诊断"
         说明 = "端口、DNS、Ping、HTTP、公网 IP 和端口进程"
         示例 = "dsh network"
+        别名 = @("net", "网络")
+    }
+    powershell = [PSCustomObject]@{
+        编号 = 4
+        分类 = "管理员与 PowerShell"
+        说明 = "管理员窗口、执行策略、Profile、命令来源"
+        示例 = "dsh powershell"
+        别名 = @("ps")
+    }
+    proxy = [PSCustomObject]@{
+        编号 = 5
+        分类 = "代理管理"
+        说明 = "当前会话代理设置、检查、移除与诊断"
+        示例 = "dsh proxy"
+        别名 = @("代理")
     }
 }
 
@@ -88,6 +93,42 @@ $script:DstHelpData = @{
     )
 }
 
+function Resolve-DstCategoryKey {
+    <#
+    .SYNOPSIS
+    按编号 / 关键字 / 中文名 / 别名解析分类键（与 DstCategoryMeta 同步，禁止硬编码映射）。
+    #>
+    param(
+        [Parameter(Mandatory)]
+        [string]$Choice
+    )
+
+    $raw = $Choice.Trim()
+    if (-not $raw) { return $null }
+    $lower = $raw.ToLowerInvariant()
+
+    foreach ($key in @($script:DstCategoryMeta.Keys)) {
+        $meta = $script:DstCategoryMeta[$key]
+        if ([string]$meta.编号 -eq $lower) { return [string]$key }
+    }
+
+    foreach ($key in @($script:DstCategoryMeta.Keys)) {
+        if ([string]$key -eq $lower) { return [string]$key }
+    }
+
+    foreach ($key in @($script:DstCategoryMeta.Keys)) {
+        $meta = $script:DstCategoryMeta[$key]
+        if ([string]$meta.分类 -eq $raw) { return [string]$key }
+        foreach ($alias in @($meta.别名)) {
+            if ($alias -and ([string]$alias).ToLowerInvariant() -eq $lower) {
+                return [string]$key
+            }
+        }
+    }
+
+    return $null
+}
+
 function Show-DstCategories {
     Write-DstTitle "DevShellTools 可用分类"
 
@@ -102,7 +143,7 @@ function Show-DstCategories {
         }
     }
 
-    $rows | Format-Table -AutoSize
+    $rows | Sort-Object 编号 | Format-Table -AutoSize
 
     Write-Host ""
     Write-Host "使用方式：" -ForegroundColor Cyan
@@ -117,7 +158,7 @@ function Show-DstCategories {
 function Show-DstCategoryCommands {
     param(
         [Parameter(Mandatory)]
-        [ValidateSet("files","powershell","proxy","git","network")]
+        [ValidateSet("files","git","network","powershell","proxy")]
         [string]$Category
     )
 
@@ -187,35 +228,19 @@ function Start-DstMenu {
         Write-Host ""
         Write-Host "0. 退出" -ForegroundColor DarkGray
         $choice = Read-Host "请输入分类编号或关键字"
+        $trimmed = $choice.Trim()
+        $lower = $trimmed.ToLowerInvariant()
 
-        switch ($choice.Trim().ToLowerInvariant()) {
-            "1" { Show-DstCategoryCommands -Category files }
-            "files" { Show-DstCategoryCommands -Category files }
-            "文件" { Show-DstCategoryCommands -Category files }
+        if ($lower -in @("0", "q", "quit", "exit")) { return }
 
-            "2" { Show-DstCategoryCommands -Category powershell }
-            "powershell" { Show-DstCategoryCommands -Category powershell }
-            "ps" { Show-DstCategoryCommands -Category powershell }
-
-            "3" { Show-DstCategoryCommands -Category proxy }
-            "proxy" { Show-DstCategoryCommands -Category proxy }
-            "代理" { Show-DstCategoryCommands -Category proxy }
-
-            "4" { Show-DstCategoryCommands -Category git }
-            "git" { Show-DstCategoryCommands -Category git }
-
-            "5" { Show-DstCategoryCommands -Category network }
-            "network" { Show-DstCategoryCommands -Category network }
-            "net" { Show-DstCategoryCommands -Category network }
-            "网络" { Show-DstCategoryCommands -Category network }
-
-            "0" { return }
-            "q" { return }
-            "quit" { return }
-
-            default {
-                Write-DstWarn "无效选项。请输入 0-5，或 files / powershell / proxy / git / network。"
-            }
+        $key = Resolve-DstCategoryKey -Choice $trimmed
+        if ($key) {
+            Show-DstCategoryCommands -Category $key
+        }
+        else {
+            $max = @($script:DstCategoryMeta.Keys).Count
+            $keys = (@($script:DstCategoryMeta.Keys) -join " / ")
+            Write-DstWarn "无效选项。请输入 0-$max，或分类关键字：$keys"
         }
 
         Write-Host ""
@@ -246,11 +271,11 @@ dsh version
     [CmdletBinding()]
     param(
         [Parameter(Position=0)]
-        [ValidateSet("menu","list","help","version","files","powershell","proxy","git","network")]
+        [ValidateSet("menu","list","help","version","files","git","network","powershell","proxy")]
         [string]$Action = "menu",
 
         [Parameter(Position=1)]
-        [ValidateSet("all","files","powershell","proxy","git","network")]
+        [ValidateSet("all","files","git","network","powershell","proxy")]
         [string]$Category = "all"
     )
 
@@ -258,17 +283,20 @@ dsh version
         "menu" { Start-DstMenu }
         "list" { Show-DstCategories }
         "version" { "DevShellTools 1.0.4" }
-        "files" { Show-DstCategoryCommands -Category files }
-        "powershell" { Show-DstCategoryCommands -Category powershell }
-        "proxy" { Show-DstCategoryCommands -Category proxy }
-        "git" { Show-DstCategoryCommands -Category git }
-        "network" { Show-DstCategoryCommands -Category network }
         "help" {
             if ($Category -eq "all") {
                 Show-DstCategories
             }
             else {
                 Show-DstCategoryCommands -Category $Category
+            }
+        }
+        default {
+            if ($script:DstCategoryMeta.Contains($Action)) {
+                Show-DstCategoryCommands -Category $Action
+            }
+            else {
+                Write-DstWarn "未知操作：$Action"
             }
         }
     }
