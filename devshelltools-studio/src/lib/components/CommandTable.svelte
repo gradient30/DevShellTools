@@ -81,7 +81,16 @@
     }
   }
 
-  async function save() {
+  function isSafetyError(msg: string | null): boolean {
+    return !!msg && msg.includes("安全规则拦截");
+  }
+
+  function safetyDetail(msg: string | null): string {
+    if (!msg) return "";
+    return msg.replace(/^安全规则拦截：?/, "").trim();
+  }
+
+  async function save(acknowledgeDanger = false) {
     if (!draftName.trim() || !draftSynopsis.trim()) {
       errMsg = "命令名与说明不能为空";
       return;
@@ -101,16 +110,26 @@
         draftExample.trim() || name,
         null,
         `更新命令 ${name}`,
-        Object.keys(paramDefaults).length > 0 ? paramDefaults : null
+        Object.keys(paramDefaults).length > 0 ? paramDefaults : null,
+        acknowledgeDanger
       );
       editingName = null;
       void onChanged();
-      showToast(`已保存 ${name}`, "success", 2200);
+      showToast(`已保存 ${name}`, acknowledgeDanger ? "warning" : "success", 2200);
     } catch (e) {
       errMsg = String(e);
     } finally {
       busy = false;
     }
+  }
+
+  async function saveWithDangerAck() {
+    const detail = safetyDetail(errMsg);
+    const prompt = detail
+      ? `当前命令触发了安全红线：\n\n${detail}\n\n确认后仅保存本命令。仍要保存？`
+      : "确认绕过安全红线并保存本命令？";
+    if (!confirm(prompt)) return;
+    await save(true);
   }
 
   async function remove(funcName: string) {
@@ -246,7 +265,14 @@
       </h3>
 
       {#if errMsg}
-        <div class="mb-3 p-2.5 text-xs bg-dst-danger-bg border border-dst-danger-border text-dst-danger-fg rounded">{errMsg}</div>
+        <div class="mb-3 p-2.5 text-xs bg-dst-danger-bg border border-dst-danger-border text-dst-danger-fg rounded space-y-1.5">
+          <div>{errMsg}</div>
+          {#if isSafetyError(errMsg)}
+            <div class="text-dst-fg-muted leading-relaxed">
+              这不代表无法退出：点「取消」或按 Esc 可放弃修改并关闭；若确需保存含红线的命令，请使用「确认风险并保存」。
+            </div>
+          {/if}
+        </div>
       {/if}
 
       <div class="space-y-3">
@@ -306,18 +332,29 @@
         {/if}
       </div>
 
-      <div class="flex gap-2 pt-4">
+      <div class="flex flex-wrap gap-2 pt-4 items-center">
         <button
+          type="button"
           class="px-3 py-1.5 text-xs bg-dst-accent text-dst-accent-fg hover:bg-dst-accent-hover rounded transition-colors disabled:opacity-50"
-          onclick={save}
+          onclick={() => save(false)}
           disabled={busy}>
           保存
         </button>
+        {#if isSafetyError(errMsg)}
+          <button
+            type="button"
+            class="px-3 py-1.5 text-xs bg-dst-warning text-dst-warning-fg hover:opacity-90 rounded transition-colors disabled:opacity-50"
+            onclick={saveWithDangerAck}
+            disabled={busy}>
+            确认风险并保存
+          </button>
+        {/if}
         <button
+          type="button"
           class="px-3 py-1.5 text-xs bg-dst-muted hover:bg-dst-muted rounded transition-colors"
           onclick={cancelEdit}
           disabled={busy}>
-          取消
+          取消 (Esc)
         </button>
       </div>
     </div>

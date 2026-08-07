@@ -26,7 +26,7 @@ mod tests {
             param_defaults: None,
             extra_examples: vec![],
         };
-        function_edit::upsert_function("Files.ps1", draft).expect("upsert");
+        function_edit::upsert_function("Files.ps1", draft, false).expect("upsert");
 
         let content = workspace::read_file("Public/Files.ps1").expect("read");
         assert!(content.contains("function m6test"));

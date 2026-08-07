@@ -127,10 +127,16 @@ pub async fn delete_category(file_name: String, _message: String) -> DstResult<(
 }
 
 #[tauri::command]
-pub async fn update_category_file(file_name: String, content: String, _message: String) -> DstResult<()> {
+pub async fn update_category_file(
+    file_name: String,
+    content: String,
+    acknowledge_danger: Option<bool>,
+    _message: String,
+) -> DstResult<()> {
+    let ack = acknowledge_danger.unwrap_or(false);
     run_blocking(move || {
         let rel = format!("Public/{file_name}");
-        let report = safety::check(&content)?;
+        let report = safety::check_with_options(&content, ack)?;
         if !report.ok {
             return Err(DstError::SafetyBlocked(report.violations.join("; ")));
         }
@@ -166,8 +172,10 @@ pub async fn upsert_function(
     example: String,
     body: Option<String>,
     param_defaults: Option<std::collections::HashMap<String, String>>,
+    acknowledge_danger: Option<bool>,
     _message: String,
 ) -> DstResult<()> {
+    let ack = acknowledge_danger.unwrap_or(false);
     run_blocking(move || {
         function_edit::upsert_function(
             &file_name,
@@ -179,6 +187,7 @@ pub async fn upsert_function(
                 param_defaults,
                 extra_examples: vec![],
             },
+            ack,
         )
     })
     .await

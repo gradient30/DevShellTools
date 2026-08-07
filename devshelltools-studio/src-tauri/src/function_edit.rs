@@ -263,6 +263,23 @@ gg 5
         assert!(block.contains("$Count = 10"), "{block}");
         assert!(extract_leading_help_inner(&format!("<#\n.SYNOPSIS\nx\n#>\nbody")).is_some());
     }
+
+    #[test]
+    fn acknowledge_danger_allows_hard_reset_in_block() {
+        let draft = FunctionDraft {
+            name: "glf".into(),
+            synopsis: "危险".into(),
+            example: "glf".into(),
+            body: Some("    & git reset --hard origin/main".into()),
+            param_defaults: None,
+            extra_examples: vec![],
+        };
+        let block = build_function_block(&draft);
+        let blocked = crate::safety::check(&block).unwrap();
+        assert!(!blocked.ok);
+        let ok = crate::safety::check_with_options(&block, true).unwrap();
+        assert!(ok.ok);
+    }
 }
 
 fn category_rel(file_name: &str) -> DstResult<String> {
@@ -371,6 +388,7 @@ pub fn patch_param_default(body: &str, name: &str, new_val: &str) -> String {
 pub fn upsert_function(
     file_name: &str,
     mut draft: FunctionDraft,
+    acknowledge_danger: bool,
 ) -> DstResult<()> {
     let rel = category_rel(file_name)?;
     validate_public_fn_name(&draft.name)?;
@@ -412,7 +430,7 @@ pub fn upsert_function(
     }
 
     let block = build_function_block(&draft);
-    assert_safety_ok(safety::check(&block)?)?;
+    assert_safety_ok(safety::check_with_options(&block, acknowledge_danger)?)?;
 
     let block_tmp = write_temp_ps1(&block)?;
     let path_escaped = file_path.to_string_lossy().replace('\'', "''");

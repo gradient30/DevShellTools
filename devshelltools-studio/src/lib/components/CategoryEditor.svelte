@@ -13,7 +13,7 @@
   }: {
     category: CategoryInfo | null;
     fileContent: string;
-    onSave: (content: string, message: string) => void;
+    onSave: (content: string, message: string, acknowledgeDanger?: boolean) => void;
     onDelete: (fileName: string) => void;
     onChanged: () => void | Promise<void>;
     onAiGenerate: (func: { name: string; synopsis: string; first_example: string } | null) => void;
@@ -60,10 +60,22 @@
     }
   }
 
-  function save() {
-    onSave(draft, `更新 ${category?.file_name ?? ""}`);
+  function save(acknowledgeDanger = false) {
+    onSave(draft, `更新 ${category?.file_name ?? ""}`, acknowledgeDanger);
     view = "overview";
     dirty = false;
+  }
+
+  function saveWithDangerAck() {
+    const detail = safetyReport?.violations.join("；") ?? "未知风险";
+    if (
+      !confirm(
+        `当前源码触发了安全红线：\n\n${detail}\n\n确认后仍将写入分类文件。仍要保存？`
+      )
+    ) {
+      return;
+    }
+    save(true);
   }
 
   function onInput() {
@@ -103,10 +115,18 @@
         </button>
         <button
           class="px-3 py-1 text-xs bg-dst-accent text-dst-accent-fg hover:bg-dst-accent-hover rounded transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-          onclick={save}
+          onclick={() => save(false)}
           disabled={!canSave}>
           保存
         </button>
+        {#if safetyReport && !safetyReport.ok && syntaxOk === true}
+          <button
+            type="button"
+            class="px-3 py-1 text-xs bg-dst-warning text-dst-warning-fg hover:opacity-90 rounded transition-colors"
+            onclick={saveWithDangerAck}>
+            确认风险并保存
+          </button>
+        {/if}
         <button class="px-3 py-1 text-xs bg-dst-muted hover:bg-dst-muted rounded transition-colors" onclick={cancelEdit}>
           取消
         </button>
@@ -124,7 +144,10 @@
           <div class="text-xs text-dst-danger">✗ 语法错误：{syntaxErr}</div>
         {/if}
         {#if safetyReport && !safetyReport.ok}
-          <div class="text-xs text-dst-danger">✗ 安全拦截：{safetyReport.violations.join("；")}</div>
+          <div class="text-xs text-dst-danger space-y-1">
+            <div>✗ 安全拦截：{safetyReport.violations.join("；")}</div>
+            <div class="text-dst-fg-muted">可点「取消」放弃，或使用「确认风险并保存」（需二次确认）。</div>
+          </div>
         {/if}
         {#if safetyReport?.ok}
           <div class="text-xs text-dst-success">✓ 安全检查通过</div>

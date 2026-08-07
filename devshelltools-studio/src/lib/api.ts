@@ -224,8 +224,18 @@ export const api = {
     invoke<void>("create_category", { fileName, content, message }),
   deleteCategory: (fileName: string, message: string) =>
     invoke<void>("delete_category", { fileName, message }),
-  updateCategoryFile: (fileName: string, content: string, message: string) =>
-    invoke<void>("update_category_file", { fileName, content, message }),
+  updateCategoryFile: (
+    fileName: string,
+    content: string,
+    message: string,
+    acknowledgeDanger?: boolean
+  ) =>
+    invoke<void>("update_category_file", {
+      fileName,
+      content,
+      acknowledgeDanger: acknowledgeDanger ?? false,
+      message
+    }),
   syncPublic: (message: string) => invoke<void>("sync_public", { message }),
   upsertFunction: (
     fileName: string,
@@ -234,7 +244,8 @@ export const api = {
     example: string,
     body: string | null,
     message: string,
-    paramDefaults?: Record<string, string> | null
+    paramDefaults?: Record<string, string> | null,
+    acknowledgeDanger?: boolean
   ) =>
     invoke<void>("upsert_function", {
       fileName,
@@ -243,6 +254,7 @@ export const api = {
       example,
       body,
       paramDefaults: paramDefaults ?? null,
+      acknowledgeDanger: acknowledgeDanger ?? false,
       message
     }),
   deleteFunction: (fileName: string, funcName: string, message: string) =>

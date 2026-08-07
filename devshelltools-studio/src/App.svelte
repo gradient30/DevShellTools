@@ -207,13 +207,13 @@
     await loadFileContent();
   }
 
-  async function handleSave(content: string, message: string) {
+  async function handleSave(content: string, message: string, acknowledgeDanger = false) {
     if (!selectedFileName) return;
     try {
-      await api.updateCategoryFile(selectedFileName, content, message);
+      await api.updateCategoryFile(selectedFileName, content, message, acknowledgeDanger);
       await loadCategories();
       if (tab === "manage") void loadManageSidebar();
-      showToast("已保存", "success", 1800);
+      showToast(acknowledgeDanger ? "已保存（已确认风险）" : "已保存", acknowledgeDanger ? "warning" : "success", 1800);
     } catch (e) {
       errorMsg.set(String(e));
     }
