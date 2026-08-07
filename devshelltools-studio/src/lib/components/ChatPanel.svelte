@@ -1100,6 +1100,7 @@
   title="危险模式插入确认"
   message="当前为危险模式，即将插入可能含破坏性操作的代码（如 git reset --hard、force-push 等）。确认继续？"
   confirmText="确认插入"
+  cancelText="取消"
   tone="danger"
   busy={applying}
   onConfirm={confirmDangerInsert}

@@ -7,6 +7,7 @@
     formatParamLine,
     formatUsage
   } from "../commandUsage";
+  import { withBusy } from "../stores/busy";
   import { showToast } from "../stores/toast";
 
   let {
@@ -103,16 +104,18 @@
       if (v.trim() !== "") paramDefaults[k] = v.trim();
     }
     try {
-      await api.upsertFunction(
-        fileName,
-        name,
-        draftSynopsis.trim(),
-        draftExample.trim() || name,
-        null,
-        `更新命令 ${name}`,
-        Object.keys(paramDefaults).length > 0 ? paramDefaults : null,
-        acknowledgeDanger
-      );
+      await withBusy(`正在保存 ${name}…`, async () => {
+        await api.upsertFunction(
+          fileName,
+          name,
+          draftSynopsis.trim(),
+          draftExample.trim() || name,
+          null,
+          `更新命令 ${name}`,
+          Object.keys(paramDefaults).length > 0 ? paramDefaults : null,
+          acknowledgeDanger
+        );
+      });
       editingName = null;
       void onChanged();
       showToast(`已保存 ${name}`, acknowledgeDanger ? "warning" : "success", 2200);
@@ -338,15 +341,15 @@
           class="px-3 py-1.5 text-xs bg-dst-accent text-dst-accent-fg hover:bg-dst-accent-hover rounded transition-colors disabled:opacity-50"
           onclick={() => save(false)}
           disabled={busy}>
-          保存
+          {busy ? "保存中…" : "保存"}
         </button>
         {#if isSafetyError(errMsg)}
           <button
             type="button"
-            class="px-3 py-1.5 text-xs bg-dst-warning text-dst-warning-fg hover:opacity-90 rounded transition-colors disabled:opacity-50"
+            class="px-3 py-1.5 text-xs bg-dst-btn-warning text-dst-btn-warning-fg hover:opacity-90 rounded transition-colors disabled:opacity-50"
             onclick={saveWithDangerAck}
             disabled={busy}>
-            确认风险并保存
+            {busy ? "保存中…" : "确认风险并保存"}
           </button>
         {/if}
         <button

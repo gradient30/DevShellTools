@@ -55,7 +55,7 @@
   const TIP_CONSISTENCY =
     "比对四处是否一致：Public 实际导出的命令 ↔ 模块清单(.psd1) ↔ 加载器(.psm1) ↔ 帮助(Help.ps1)。通过表示导出列表齐全，可被 PowerShell 正确加载；不通过时可按错误修复，或点下方「同步公共部分」。「实际」= 扫描到的命令数，「psd1」= 清单声明数。";
   const TIP_SYNC =
-    "根据当前 Public/*.ps1 自动重写 .psd1 / .psm1 / Help.ps1 中的导出与帮助列表（即「公共部分」）。保存分类时通常已自动同步；此按钮用于手动补齐或修复不一致。";
+    "不会还原或删除自定义命令。仅按当前 Public/*.ps1 重写 .psd1、.psm1、Help.ps1 的导出与帮助列表，分类源码不动。保存时通常已自动同步；不一致时再点此。";
 
   function toggleSidebarTip(which: "consistency" | "sync") {
     sidebarTip = sidebarTip === which ? null : which;
@@ -210,7 +210,9 @@
   async function handleSave(content: string, message: string, acknowledgeDanger = false) {
     if (!selectedFileName) return;
     try {
-      await api.updateCategoryFile(selectedFileName, content, message, acknowledgeDanger);
+      await withBusy(`正在保存 ${selectedFileName}…`, async () => {
+        await api.updateCategoryFile(selectedFileName, content, message, acknowledgeDanger);
+      });
       await loadCategories();
       if (tab === "manage") void loadManageSidebar();
       showToast(acknowledgeDanger ? "已保存（已确认风险）" : "已保存", acknowledgeDanger ? "warning" : "success", 1800);
