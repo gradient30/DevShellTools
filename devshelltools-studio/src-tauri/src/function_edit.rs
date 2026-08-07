@@ -445,8 +445,8 @@ $enc = New-Object System.Text.UTF8Encoding $true
     run_ps_script(&script)?;
     let _ = std::fs::remove_file(&block_tmp);
 
+    // 仅校验本次写入的函数块；同文件其它命令（如 AI /danger 插入的 glf）不应阻断 gg 等正常编辑。
     let content = workspace::read_file(&rel)?;
-    assert_safety_ok(safety::check(&content)?)?;
     let parsed = ps_parser::parse_ps1(&content)?;
     sync::regenerate_with_parsed(file_name, Some(parsed))?;
     workspace::touch_last_sync()?;

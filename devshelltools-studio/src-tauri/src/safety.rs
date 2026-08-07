@@ -30,8 +30,8 @@ pub fn check_with_options(code: &str, danger_mode: bool) -> DstResult<SafetyRepo
             violations.push("禁止 git push --force / --force-with-lease".into());
         }
     }
-    // 规则2：禁止 git reset --hard
-    if code.contains("reset") && contains_word(code, "--hard") {
+    // 规则2：禁止 git reset --hard（须同时出现 git reset 与 --hard，避免 preset 等误匹配 reset 子串）
+    if code.contains("git reset") && contains_word(code, "--hard") {
         violations.push("禁止 git reset --hard".into());
     }
     // 规则3：禁止 git clean -fd / -f（真实删除）
@@ -158,6 +158,30 @@ mod tests {
     fn hard_reset_blocked() {
         let r = check("git reset --hard HEAD~1").unwrap();
         assert!(!r.ok);
+    }
+
+    #[test]
+    fn reset_substring_without_git_reset_ok() {
+        // decorate / preset 等含 reset 子串但非 git reset --hard
+        let r = check(r#"& git log --decorate --oneline --all "--max-count=$Count""#).unwrap();
+        assert!(r.ok, "{:?}", r.violations);
+    }
+
+    #[test]
+    fn synopsis_mention_git_reset_hard_in_other_fn_block_not_checked() {
+        // upsert 只扫当前块；gg 块本身安全即应通过
+        let gg = r#"function gg {
+<#
+.SYNOPSIS
+显示图形化精简提交历史
+.EXAMPLE
+gg
+#>
+    Assert-Git
+    & git log --graph --decorate --oneline --all "--max-count=$Count"
+}"#;
+        let r = check(gg).unwrap();
+        assert!(r.ok, "gg 块不应被拦截：{:?}", r.violations);
     }
 
     #[test]
