@@ -260,14 +260,15 @@
 
   async function handleApplyCode(code: string, fileName: string, dangerMode = false) {
     try {
-      const names = await api.applyAiCode(
-        fileName,
-        code,
-        `AI 插入到 ${fileName}`,
-        dangerMode
-      );
+      const names = await withBusy(`正在插入到 ${fileName}…`, async () => {
+        return api.applyAiCode(
+          fileName,
+          code,
+          `AI 插入到 ${fileName}`,
+          dangerMode
+        );
+      });
       selectedFileName = fileName;
-      tab = "manage";
       await loadCategories();
       void loadManageSidebar();
       void loadInstallStatus();
@@ -278,6 +279,7 @@
       );
     } catch (e) {
       errorMsg.set(String(e));
+      throw e;
     }
   }
 

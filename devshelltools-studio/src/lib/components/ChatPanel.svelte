@@ -15,6 +15,7 @@
     type SlashCommand
   } from "../slashCommands";
   import { showToast } from "../stores/toast";
+  import ConfirmDialog from "./ConfirmDialog.svelte";
   import MarkdownText from "./MarkdownText.svelte";
 
   let {
@@ -43,6 +44,14 @@
   /** 本会话最高权限：输入 /danger 开启，/safe 关闭 */
   let dangerMode = $state(false);
   let applying = $state(false);
+  /** 正在插入的代码块 key，用于按钮文案 */
+  let applyingKey = $state<string | null>(null);
+  /** 危险模式插入前的二次确认 */
+  let dangerInsertConfirm = $state<{
+    block: ValidatedCodeBlock;
+    key: string;
+    fileName: string;
+  } | null>(null);
   let replyCodeBlocks = $state<Record<number, ValidatedCodeBlock[]>>({});
   let targetFiles = $state<Record<string, string>>({});
   let expandedBlocks = $state<Set<string>>(new Set());
@@ -582,19 +591,40 @@
       return;
     }
     if (dangerMode) {
-      const ok = confirm(
-        "当前为危险模式，即将插入可能含破坏性操作的代码。确认继续？"
-      );
-      if (!ok) return;
+      dangerInsertConfirm = { block, key, fileName };
+      return;
     }
+    await doApply(block, key, fileName, false);
+  }
+
+  async function doApply(
+    block: ValidatedCodeBlock,
+    key: string,
+    fileName: string,
+    useDangerMode: boolean
+  ) {
     applying = true;
+    applyingKey = key;
+    errMsg = null;
     try {
-      await onApplyCode(block.code, fileName, dangerMode);
+      await onApplyCode(block.code, fileName, useDangerMode);
     } catch (e) {
       errMsg = String(e);
     } finally {
       applying = false;
+      applyingKey = null;
     }
+  }
+
+  function confirmDangerInsert() {
+    const pending = dangerInsertConfirm;
+    if (!pending) return;
+    dangerInsertConfirm = null;
+    void doApply(pending.block, pending.key, pending.fileName, true);
+  }
+
+  function cancelDangerInsert() {
+    dangerInsertConfirm = null;
   }
 
   function toggleBlock(key: string) {
@@ -911,7 +941,7 @@
                             class="px-2 py-1 text-xs bg-dst-btn-success text-dst-btn-success-fg hover:opacity-90 rounded disabled:opacity-40"
                             disabled={!canApply(block) || applying}
                             onclick={() => apply(block, key)}>
-                            插入到分类
+                            {applyingKey === key ? "插入中…" : "插入到分类"}
                           </button>
                         </div>
                       </div>
@@ -1064,3 +1094,13 @@
     </div>
   </div>
 </div>
+
+<ConfirmDialog
+  open={dangerInsertConfirm !== null}
+  title="危险模式插入确认"
+  message="当前为危险模式，即将插入可能含破坏性操作的代码（如 git reset --hard、force-push 等）。确认继续？"
+  confirmText="确认插入"
+  tone="danger"
+  busy={applying}
+  onConfirm={confirmDangerInsert}
+  onCancel={cancelDangerInsert} />
